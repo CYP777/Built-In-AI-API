@@ -59,10 +59,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
     >
       {/* Bubble Container */}
       <div
-        className={`group relative max-w-[85%] sm:max-w-[75%] min-w-0 rounded-2xl px-4 py-3 text-sm shadow-xs break-words [overflow-wrap:anywhere] ${
+        className={`group relative max-w-[88%] sm:max-w-[78%] min-w-0 rounded-2xl px-4.5 py-3.5 text-sm shadow-xs break-words [overflow-wrap:anywhere] leading-relaxed transition-all ${
           isUser
-            ? 'bg-emerald-600 text-white rounded-br-xs'
-            : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-xs shadow-slate-100'
+            ? 'bg-emerald-600 text-white rounded-br-xs shadow-sm shadow-emerald-600/10'
+            : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-xs shadow-sm shadow-slate-100/80'
         }`}
       >
         {/* Message Text with Markdown */}

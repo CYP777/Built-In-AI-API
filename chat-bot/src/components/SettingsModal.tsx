@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { X, Sliders, HelpCircle } from 'lucide-react';
+import { estimateTokens } from '../services/ai-service';
+import { SteppedRangeSlider } from './SteppedRangeSlider';
 
-interface SettingsModalProps {
+export interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   systemPrompt: string;
@@ -11,6 +13,9 @@ interface SettingsModalProps {
   topK: number;
   setTopK: (k: number) => void;
   onSaveAndReset: () => void;
+  messagesCount?: number;
+  conversationChars?: number;
+  onOpenPolicy?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -24,22 +29,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   setTopK,
   onSaveAndReset,
 }) => {
+  // Live Token calculations for System Prompt
+  const systemPromptTokens = useMemo(() => {
+    return estimateTokens(systemPrompt);
+  }, [systemPrompt]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/50">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
-              <Sliders className="h-4 w-4" />
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/70">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
+              <Sliders className="h-5 w-5" />
             </div>
-            <h3 className="font-semibold text-slate-800 text-base">ตั้งค่าโมเดล AI (Prompt Settings)</h3>
+            <div>
+              <h3 className="font-bold text-slate-800 text-base leading-tight">
+                ตั้งค่าโมเดล AI (Model Settings)
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Gemini Nano On-Device • ปรับแต่งพารามิเตอร์ของโมเดล
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+            title="ปิด"
           >
             <X className="h-5 w-5" />
           </button>
@@ -49,68 +67,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
           {/* System Prompt */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
-              System Prompt (บทบาทของ AI)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                System Prompt (บทบาทของ AI)
+              </label>
+              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                ~{systemPromptTokens} Tokens
+              </span>
+            </div>
             <textarea
-              rows={3}
+              rows={6}
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="เช่น: คุณคือผู้ช่วยเขียนโค้ด React ที่เป็นมิตรและตอบคำถามอย่างกระชับ..."
-              className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-100 transition resize-none text-slate-700"
-            />
-            <p className="text-[12px] text-slate-400">
-              กำหนดบทบาทและลักษณะการตอบของ AI ในระหว่างการสนทนา
-            </p>
-          </div>
-
-          {/* Temperature */}
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
-                Temperature (ความคิดสร้างสรรค์): <span className="text-emerald-600 font-bold">{temperature}</span>
-              </label>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={temperature}
-              onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-full accent-emerald-600 cursor-pointer"
-            />
-            <div className="flex justify-between text-[11px] text-slate-400">
-              <span>0.0 (แม่นยำ/แน่นอน)</span>
-              <span>1.0 (สร้างสรรค์/หลากหลาย)</span>
-            </div>
-          </div>
-
-          {/* Top-K */}
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-600">
-                Top-K: <span className="text-emerald-600 font-bold">{topK}</span>
-              </label>
-            </div>
-            <input
-              type="range"
-              min="1"
-              max="50"
-              step="1"
-              value={topK}
-              onChange={(e) => setTopK(parseInt(e.target.value))}
-              className="w-full accent-emerald-600 cursor-pointer"
+              placeholder="เช่น: คุณคือผู้ช่วย AI ที่ชาญฉลาดและเป็นมิตร ให้ตอบคำถามอย่างถูกต้อง สุภาพ และกระชับ..."
+              className="w-full min-h-40 rounded-xl border border-slate-200 p-3.5 text-sm leading-relaxed focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-100 transition resize-y text-slate-700"
             />
             <p className="text-[11px] text-slate-400">
-              จำกัดจำนวนคำที่เป็นไปได้ที่โมเดลจะพิจารณา (สำหรับ Chrome 154+ แนะนำค่า Top-K: 1 และ Temperature: 0 เพื่อรองรับระบบ MTP)
+              กำหนดบทบาท คำสั่งเฉพาะ และลักษณะการตอบของ AI (สามารถลากมุมขวาล่างเพื่อขยายขนาดช่องกรอกเพิ่มเติมได้)
             </p>
           </div>
+
+          {/* Temperature Stepped Slider */}
+          <SteppedRangeSlider
+            label="Temperature (ความคิดสร้างสรรค์)"
+            value={temperature}
+            onChange={setTemperature}
+            min={0}
+            max={1}
+            step={0.1}
+            ticks={[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]}
+            dots={[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]}
+            formatTick={(val) => val.toFixed(1)}
+            badgeValue={temperature.toFixed(1)}
+            minLabel="0.0 (แม่นยำ/แน่นอน)"
+            maxLabel="1.0 (สร้างสรรค์/หลากหลาย)"
+            description="กำหนดระดับความหลากหลายของการตอบ ยิ่งค่าต่ำคำตอบจะยิ่งตรงไปตรงมาและคงเส้นคงวา"
+          />
+
+          {/* Top-K Stepped Slider */}
+          <SteppedRangeSlider
+            label="Top-K (การคัดเลือกคำที่เป็นไปได้)"
+            value={topK}
+            onChange={setTopK}
+            min={1}
+            max={50}
+            step={1}
+            ticks={[1, 10, 20, 30, 40, 50]}
+            dots={[1, 10, 20, 30, 40, 50]}
+            formatTick={(val) => val.toString()}
+            badgeValue={topK}
+            minLabel="1 (คำตอบที่น่าจะเป็นไปได้มากที่สุด)"
+            maxLabel="50 (พิจารณาคำศัพท์หลากหลาย)"
+            description="จำกัดจำนวนคำที่เป็นไปได้ที่โมเดลจะพิจารณา (สำหรับ Chrome 154+ แนะนำค่า Top-K: 1 และ Temperature: 0 เพื่อรองรับระบบ MTP)"
+          />
 
           {/* Built-in AI Guide Box */}
           <div className="rounded-xl bg-slate-50 border border-slate-200/80 p-4 space-y-2 text-xs text-slate-600">
             <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-              <HelpCircle className="h-4 w-4 text-emerald-500" />
+              <HelpCircle className="h-4 w-4 text-emerald-600" />
               <span>วิธีเปิดใช้งาน Chrome Built-in AI (Prompt API)</span>
             </div>
             <ol className="list-decimal list-inside space-y-1 text-slate-500 pl-1 leading-relaxed">
@@ -138,7 +152,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               onSaveAndReset();
               onClose();
             }}
-            className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 transition"
+            className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-medium text-white shadow-xs hover:bg-emerald-700 transition"
           >
             บันทึกและเริ่มเซสชันใหม่
           </button>

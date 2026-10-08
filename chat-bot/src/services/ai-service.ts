@@ -274,6 +274,55 @@ class AIService {
       this.session = null;
     }
   }
+
+  public getSession(): AILanguageModelSession | null {
+    return this.session;
+  }
+
+  public estimateTokens(text: string): number {
+    return estimateTokens(text);
+  }
+
+  public async countPromptTokens(text: string): Promise<number> {
+    if (!text || !text.trim()) return 0;
+    if (this.session && typeof this.session.countPromptTokens === 'function') {
+      try {
+        return await this.session.countPromptTokens(text);
+      } catch (err) {
+        console.warn('countPromptTokens fallback to estimation:', err);
+      }
+    }
+    return this.estimateTokens(text);
+  }
+
+  public getContextTokenUsage(accumulatedChars?: number): {
+    maxTokens: number;
+    tokensSoFar: number;
+    tokensLeft: number;
+  } {
+    const maxTokens = this.session?.maxTokens ?? 4096;
+    let tokensSoFar = this.session?.tokensSoFar ?? 0;
+
+    if (tokensSoFar === 0 && accumulatedChars) {
+      tokensSoFar = Math.ceil(accumulatedChars / 3.2);
+    }
+
+    const tokensLeft = this.session?.tokensLeft ?? Math.max(0, maxTokens - tokensSoFar);
+    return {
+      maxTokens,
+      tokensSoFar,
+      tokensLeft,
+    };
+  }
+}
+
+export function estimateTokens(text: string): number {
+  if (!text || !text.trim()) return 0;
+  const thaiMatch = text.match(/[\u0E00-\u0E7F]/g);
+  const thaiCount = thaiMatch ? thaiMatch.length : 0;
+  const nonThaiCount = text.length - thaiCount;
+  const estimated = Math.ceil(thaiCount / 2.8 + nonThaiCount / 4);
+  return Math.max(1, estimated);
 }
 
 export const aiService = new AIService();
