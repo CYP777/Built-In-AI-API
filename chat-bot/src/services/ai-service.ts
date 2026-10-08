@@ -1,0 +1,279 @@
+import type {
+  AILanguageModelFactory,
+  AILanguageModelSession,
+  AILanguageModelCreateOptions,
+} from '../types/ai';
+
+export type AIStatus = 'checking' | 'available' | 'downloading' | 'unavailable' | 'mock';
+
+export interface AIServiceState {
+  status: AIStatus;
+  statusMessage: string;
+  isMock: boolean;
+}
+
+class AIService {
+  private session: AILanguageModelSession | null = null;
+  private factory: AILanguageModelFactory | null = null;
+  private currentSystemPrompt: string = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+
+  public getFactory(): AILanguageModelFactory | null {
+    if (typeof window === 'undefined') return null;
+
+    if (window.ai?.languageModel) {
+      return window.ai.languageModel;
+    }
+
+    if (typeof ai !== 'undefined' && ai?.languageModel) {
+      return ai.languageModel;
+    }
+
+    if (typeof window.LanguageModel !== 'undefined') {
+      return window.LanguageModel;
+    }
+
+    if (typeof LanguageModel !== 'undefined') {
+      return LanguageModel;
+    }
+
+    return null;
+  }
+
+  public async checkAvailability(): Promise<AIServiceState> {
+    try {
+      this.factory = this.getFactory();
+
+      if (!this.factory) {
+        return {
+          status: 'unavailable',
+          statusMessage: 'ไม่พบ Chrome Built-in AI ในเบราว์เซอร์นี้ (สามารถใช้โหมดจำลองได้)',
+          isMock: true,
+        };
+      }
+
+      if (typeof this.factory.capabilities === 'function') {
+        const capabilities = await this.factory.capabilities();
+        if (capabilities.available === 'readily') {
+          return {
+            status: 'available',
+            statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+            isMock: false,
+          };
+        } else if (capabilities.available === 'after-download') {
+          return {
+            status: 'downloading',
+            statusMessage: 'กำลังดาวน์โหลดโมเดล Gemini Nano บนอุปกรณ์...',
+            isMock: false,
+          };
+        }
+      }
+
+      if (typeof this.factory.availability === 'function') {
+        let avail: string;
+        try {
+          avail = await this.factory.availability({ samplingMode: 'most-predictable' });
+        } catch {
+          try {
+            avail = await this.factory.availability();
+          } catch {
+            avail = 'unavailable';
+          }
+        }
+
+        if (avail === 'readily' || avail === 'available') {
+          return {
+            status: 'available',
+            statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+            isMock: false,
+          };
+        } else if (avail === 'after-download' || avail === 'downloading' || avail === 'downloadable') {
+          return {
+            status: 'downloading',
+            statusMessage: 'กำลังดาวน์โหลดโมเดล Gemini Nano บนอุปกรณ์...',
+            isMock: false,
+          };
+        }
+      }
+
+      // If create is available directly
+      return {
+        status: 'available',
+        statusMessage: 'Chrome Prompt API พร้อมทำงาน',
+        isMock: false,
+      };
+    } catch (err) {
+      console.warn('AI availability check error:', err);
+      return {
+        status: 'unavailable',
+        statusMessage: 'ไม่สามารถเชื่อมต่อโมเดล Built-in AI ได้ (จะเปิดโหมดจำลองเพื่อทดสอบ)',
+        isMock: true,
+      };
+    }
+  }
+
+  public hasActiveSession(): boolean {
+    return this.session !== null;
+  }
+
+  public async initSession(options?: AILanguageModelCreateOptions): Promise<void> {
+    this.factory = this.getFactory();
+
+    if (options?.systemPrompt) {
+      this.currentSystemPrompt = options.systemPrompt;
+    }
+
+    if (this.factory) {
+      try {
+        if (this.session) {
+          try {
+            this.session.destroy();
+          } catch {
+            // ignore
+          }
+          this.session = null;
+        }
+
+        let sessionCreated = false;
+
+        // Try 1: with samplingMode: 'most-predictable' (Chrome 154+ MTP compatible)
+        try {
+          this.session = await this.factory.create({
+            systemPrompt: this.currentSystemPrompt,
+            samplingMode: 'most-predictable',
+          });
+          sessionCreated = true;
+          console.log('AI session created successfully via samplingMode');
+        } catch (e1) {
+          console.warn('Try 1 (samplingMode) failed:', e1);
+        }
+
+        // Try 2: with topK: 1 (MTP compatible)
+        if (!sessionCreated) {
+          try {
+            this.session = await this.factory.create({
+              systemPrompt: this.currentSystemPrompt,
+              topK: 1,
+            });
+            sessionCreated = true;
+            console.log('AI session created successfully via topK: 1');
+          } catch (e2) {
+            console.warn('Try 2 (topK: 1) failed:', e2);
+          }
+        }
+
+        // Try 3: with user options / fallback
+        if (!sessionCreated) {
+          try {
+            this.session = await this.factory.create({
+              systemPrompt: this.currentSystemPrompt,
+              temperature: options?.temperature,
+              topK: options?.topK,
+            });
+            sessionCreated = true;
+          } catch (e3) {
+            console.warn('Try 3 (user options) failed:', e3);
+          }
+        }
+
+        // Try 4: bare minimum
+        if (!sessionCreated) {
+          this.session = await this.factory.create();
+        }
+      } catch (e) {
+        console.warn('Could not initialize Built-in AI session:', e);
+        this.session = null;
+      }
+    }
+  }
+
+  public async promptStream(
+    userMessage: string,
+    onChunk: (chunkText: string) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    this.factory = this.getFactory();
+
+    // If real Built-in AI is available
+    if (this.factory) {
+      if (!this.session) {
+        await this.initSession();
+      }
+
+      if (this.session) {
+        try {
+          if (typeof this.session.promptStreaming === 'function') {
+            try {
+              const stream = this.session.promptStreaming(userMessage, { signal });
+              let accumulated = '';
+              for await (const chunk of stream as unknown as AsyncIterable<string>) {
+                accumulated += chunk;
+                onChunk(accumulated);
+              }
+              return accumulated;
+            } catch (streamErr) {
+              console.warn('promptStreaming error, falling back to prompt():', streamErr);
+              const answer = await this.session.prompt(userMessage, { signal });
+              onChunk(answer);
+              return answer;
+            }
+          } else {
+            const answer = await this.session.prompt(userMessage, { signal });
+            onChunk(answer);
+            return answer;
+          }
+        } catch (err: unknown) {
+          console.warn('Prompt error, attempting recreation...', err);
+          await this.initSession();
+          if (this.session) {
+            const answer = await this.session.prompt(userMessage, { signal });
+            onChunk(answer);
+            return answer;
+          }
+          throw err;
+        }
+      }
+    }
+
+    // Mock response fallback for development / browsers without flag enabled
+    return await this.mockStreamResponse(userMessage, onChunk, signal);
+  }
+
+  private async mockStreamResponse(
+    userMessage: string,
+    onChunk: (accumulated: string) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const mockReplies = [
+      `สวัสดีครับ! ได้รับข้อความ "${userMessage}" เรียบร้อยแล้วครับ ขอบคุณที่ทดสอบใช้งาน UI แชทบอทนี้! 😊`,
+      `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล Gemini Nano บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
+      `ข้อความของคุณคือ: "${userMessage}"\n\nระบบแชทบอทนี้พร้อมใช้งานทั้ง:\n1. การตอบแบบ Real-time Streaming\n2. การปรับแต่ง System Prompt\n3. การจัดรูปแบบ **Markdown** อย่างสวยงาม\n4. รองรับทั้ง Desktop และ Mobile`,
+    ];
+    const reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
+
+    let current = '';
+
+    for (let i = 0; i < reply.length; i++) {
+      if (signal?.aborted) {
+        break;
+      }
+      current += reply[i];
+      onChunk(current);
+      await new Promise((r) => setTimeout(r, 15));
+    }
+
+    return current;
+  }
+
+  public resetSession(): void {
+    if (this.session) {
+      try {
+        this.session.destroy();
+      } catch {
+        // ignore
+      }
+      this.session = null;
+    }
+  }
+}
+
+export const aiService = new AIService();
