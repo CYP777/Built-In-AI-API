@@ -33,6 +33,7 @@ const POLICY_MARKER = '[ข้อกำหนดนโยบายความ�
 const POLICY_CLAUSE =
   '\n\n[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]: ต้องตอบโดยยึดหลักข้อเท็จจริงและความเป็นกลาง ตรวจสอบความถูกต้องอย่างรอบคอบ ปฏิเสธข้อมูลที่ผิดกฎหมายหรือสร้างความเกลียดชัง และไม่แต่งเติมข้อมูลเท็จอย่างเด็ดขาด';
 const DEFAULT_BASE_PROMPT = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+const POLICY_ACCEPTED_KEY = 'ai_safety_policy_accepted';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -50,8 +51,13 @@ const AIPromptPage: React.FC = () => {
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
 
-  // Policy Modal State (เปิดแจ้งเตือนอัตโนมัติก่อนเริ่มแชทตอนโหลดหน้าครั้งแรกเสมอ)
-  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(true);
+  // Policy Modal State (เปิดแจ้งเตือนอัตโนมัติเฉพาะเมื่อยังไม่เคยกดยอมรับนโยบาย)
+  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(POLICY_ACCEPTED_KEY) !== 'true';
+    }
+    return false;
+  });
 
   // Prompt History state สำหรับปุ่มลูกศรขึ้น/ลง (Arrow Up / Down)
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
@@ -76,6 +82,13 @@ const AIPromptPage: React.FC = () => {
   const [topK, setTopK] = useState<number>(1);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
+  // Auto-detected Model Information
+  const activeModelInfo = useMemo(() => {
+    // Re-evaluate when statusState updates (e.g. session initialized)
+    void statusState.status;
+    return aiService.detectModelType();
+  }, [statusState.status]);
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -98,6 +111,11 @@ const AIPromptPage: React.FC = () => {
 
   // Check Built-in AI on load
   const verifyAI = useCallback(async () => {
+    setStatusState((prev) => ({
+      ...prev,
+      status: 'checking',
+      statusMessage: 'กำลังตรวจสอบสถานะโมเดล...',
+    }));
     const state = await aiService.checkAvailability();
     await aiService.initSession({
       systemPrompt,
@@ -105,10 +123,12 @@ const AIPromptPage: React.FC = () => {
       topK,
     });
     if (aiService.hasActiveSession()) {
+      const detected = aiService.detectModelType();
       setStatusState({
         status: 'available',
-        statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+        statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
         isMock: false,
+        ...detected,
       });
     } else {
       setStatusState(state);
@@ -126,10 +146,12 @@ const AIPromptPage: React.FC = () => {
       });
       if (!ignore) {
         if (aiService.hasActiveSession()) {
+          const detected = aiService.detectModelType();
           setStatusState({
             status: 'available',
-            statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+            statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
             isMock: false,
+            ...detected,
           });
         } else {
           setStatusState(state);
@@ -165,6 +187,9 @@ const AIPromptPage: React.FC = () => {
 
   // Policy Handlers
   const handleAcceptPolicy = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(POLICY_ACCEPTED_KEY, 'true');
+    }
     setIsPolicyModalOpen(false);
   };
 
@@ -399,6 +424,8 @@ const AIPromptPage: React.FC = () => {
         status={statusState.status}
         statusMessage={statusState.statusMessage}
         isMock={statusState.isMock}
+        modelName={activeModelInfo.modelName}
+        modelType={activeModelInfo.modelType}
         onClearChat={handleClearChat}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onRefreshStatus={verifyAI}
@@ -449,7 +476,7 @@ const AIPromptPage: React.FC = () => {
                 เริ่มต้นสนทนากับ AI
               </h2>
               <p className="mt-2.5 max-w-lg text-sm text-slate-500 leading-relaxed">
-                ประมวลผลคำสั่งด้วย Gemini Nano บนเครื่องของคุณโดยตรง ปลอดภัย รวดเร็ว และเป็นส่วนตัว
+                ประมวลผลคำสั่งด้วย {activeModelInfo.modelName} บนเครื่องของคุณโดยตรง ปลอดภัย รวดเร็ว และเป็นส่วนตัว
               </p>
 
               {/* Prompt Starter Pills */}
@@ -647,7 +674,7 @@ const AIPromptPage: React.FC = () => {
                     เตือนภัย: Context Window เต็มพิกัด
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    บริบทการสนทนาเกินขีดจำกัดความจุของ Gemini Nano
+                    บริบทการสนทนาเกินขีดจำกัดความจุของ {activeModelInfo.modelName}
                   </p>
                 </div>
               </div>
@@ -665,7 +692,7 @@ const AIPromptPage: React.FC = () => {
             <div className="p-6 space-y-3.5 text-xs sm:text-sm">
               <p className="text-slate-700 leading-relaxed">
                 ขณะนี้บริบทการสนทนาใช้ไปแล้ว <strong>{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} Tokens ({contextPercentage}%)</strong>
-                {' '}ซึ่งเต็มความจุของ Gemini Nano แล้ว หากสนทนาต่อ โมเดลจะตัดประวัติการสนทนาแรกเริ่มออก
+                {' '}ซึ่งเต็มความจุของโมเดลแล้ว หากสนทนาต่อ โมเดลจะตัดประวัติการสนทนาแรกเริ่มออก
               </p>
               <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800">
                 💡 <strong>คำแนะนำของระบบ:</strong> ควรเปิดเซสชันใหม่เพื่อคงความรวดเร็วและป้องกันข้อมูลคลาดเคลื่อน
@@ -716,6 +743,7 @@ const AIPromptPage: React.FC = () => {
         messagesCount={messages.length}
         conversationChars={conversationChars}
         onOpenPolicy={() => setIsPolicyModalOpen(true)}
+        activeModelName={activeModelInfo.modelName}
       />
     </div>
   );

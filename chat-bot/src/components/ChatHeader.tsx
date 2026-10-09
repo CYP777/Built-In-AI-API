@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Bot, Sliders, SquarePen, AlertCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { AIStatus } from '../services/ai-service';
 
@@ -6,6 +6,8 @@ interface ChatHeaderProps {
   status: AIStatus;
   statusMessage: string;
   isMock?: boolean;
+  modelName?: string;
+  modelType?: 'gemini-nano' | 'gemma';
   onClearChat: () => void;
   onOpenSettings: () => void;
   onRefreshStatus: () => void;
@@ -20,23 +22,49 @@ interface ChatHeaderProps {
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
   status,
   statusMessage,
+  modelName,
+  modelType,
   onClearChat,
   onOpenSettings,
   onRefreshStatus,
   onOpenPolicy,
 }) => {
+  const [isSpinning, setIsSpinning] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isSpinning) return;
+    setIsSpinning(true);
+    try {
+      await Promise.resolve(onRefreshStatus());
+    } finally {
+      setTimeout(() => {
+        setIsSpinning(false);
+      }, 700);
+    }
+  };
+
   const getStatusBadge = () => {
     switch (status) {
-      case 'available':
+      case 'available': {
+        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma 4 (GPU)' : 'Gemini Nano (GPU)');
+        const tooltip =
+          modelType === 'gemma'
+            ? 'โมเดล On-Device บนเครื่อง: Gemma 4 (รันผ่าน GPU)'
+            : 'โมเดล On-Device บนเครื่อง: Gemini Nano (รันผ่าน GPU nano_v3_gpu)';
+
         return (
-          <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-500/20 shadow-2xs">
+          <div
+            title={tooltip}
+            className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 border border-emerald-500/20 shadow-2xs"
+          >
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]"></span>
             </span>
-            <span className="tracking-tight">Gemini Nano On-Device</span>
+            <span className="tracking-tight">{displayLabel}</span>
           </div>
         );
+      }
       case 'downloading':
         return (
           <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-700 border border-amber-500/20 shadow-2xs">
@@ -83,7 +111,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             </span>
           </div>
           <p className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
-            แชทบอทประมวลผลด้วยโมเดล Gemini ภายในเครื่อง
+            {modelType === 'gemma'
+              ? 'แชทบอทประมวลผลด้วยโมเดล Gemma ภายในเครื่อง (GPU)'
+              : 'แชทบอทประมวลผลด้วยโมเดล Gemini Nano ภายในเครื่อง (GPU)'}
           </p>
         </div>
       </div>
@@ -97,11 +127,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           </div>
           <button
             type="button"
-            onClick={onRefreshStatus}
+            onClick={handleRefresh}
+            disabled={isSpinning || status === 'checking'}
             title="ตรวจสอบสถานะ Built-in AI ใหม่"
-            className="flex items-center justify-center p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-slate-100/70 rounded-lg transition active:scale-90"
+            className="flex items-center justify-center p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-slate-100/70 rounded-lg transition active:scale-90 cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${status === 'checking' ? 'animate-spin text-emerald-600' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning || status === 'checking' ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
         </div>
 

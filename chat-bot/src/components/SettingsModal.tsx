@@ -16,6 +16,7 @@ export interface SettingsModalProps {
   messagesCount?: number;
   conversationChars?: number;
   onOpenPolicy?: () => void;
+  activeModelName?: string;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -28,6 +29,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   topK,
   setTopK,
   onSaveAndReset,
+  activeModelName,
 }) => {
   // Live Token calculations for System Prompt
   const systemPromptTokens = useMemo(() => {
@@ -50,7 +52,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ตั้งค่าโมเดล AI (Model Settings)
               </h3>
               <p className="text-[11px] text-slate-500">
-                Gemini Nano On-Device • ปรับแต่งพารามิเตอร์ของโมเดล
+                {activeModelName || 'Gemini Nano (GPU)'} • ปรับแต่งพารามิเตอร์ของโมเดล
               </p>
             </div>
           </div>

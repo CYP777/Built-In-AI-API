@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import {
   X,
   ShieldCheck,
-  Lock,
-  Scale,
   Check,
   Sparkles,
 } from 'lucide-react';
@@ -120,7 +118,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
             <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
               <div className="flex items-start gap-3">
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
-                  <Lock className="h-3.5 w-3.5" />
+                  3
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
@@ -138,7 +136,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
             <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
               <div className="flex items-start gap-3">
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
-                  <Scale className="h-3.5 w-3.5" />
+                  4
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
@@ -188,7 +186,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
             <span className="font-medium">
-              ประมวลผลบนเครื่อง 100% • ปลอดภัยตามมาตรฐาน PDPA
+              ประมวลผลบนเครื่อง 100%
             </span>
           </div>
 
