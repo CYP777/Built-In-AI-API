@@ -1,39 +1,24 @@
 import React, { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Layers, ChevronDown } from 'lucide-react';
+import { cleanCompressedSummary } from '../services/summarizer-service';
+import { stripMarkdown } from '../utils/markdown';
 
 export interface Message {
   id: string;
-  sender: 'user' | 'ai';
+  sender: 'user' | 'ai' | 'system';
   text: string;
   timestamp: string;
   isStreaming?: boolean;
-}
-
-function stripMarkdown(md: string): string {
-  if (!md) return '';
-  return md
-    // Remove code block backticks
-    .replace(/```[a-zA-Z]*\n?([\s\S]*?)```/g, '$1')
-    // Remove inline code backticks
-    .replace(/`([^`]+)`/g, '$1')
-    // Remove headers (#, ##, ...)
-    .replace(/^#{1,6}\s+/gm, '')
-    // Remove bold and italic (**, *, __, _)
-    .replace(/(\*\*|__)(.*?)\1/g, '$2')
-    .replace(/(\*|_)(.*?)\1/g, '$2')
-    // Remove strikethrough (~~)
-    .replace(/~~(.*?)~~/g, '$1')
-    // Remove blockquote symbol (> )
-    .replace(/^>\s+/gm, '')
-    // Remove links [text](url) -> text
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Remove images ![alt](url) -> alt
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-    // Remove horizontal lines
-    .replace(/^([-*_]){3,}\s*$/gm, '')
-    .trim();
+  isCompressedContext?: boolean;
+  isCompacted?: boolean;
+  compressionStats?: {
+    originalTokens: number;
+    compressedTokens: number;
+    savedTokens: number;
+    percentageSaved: number;
+  };
 }
 
 interface ChatMessageProps {
@@ -42,6 +27,7 @@ interface ChatMessageProps {
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   const isUser = message.sender === 'user';
 
   const handleCopy = () => {
@@ -51,11 +37,110 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  if (message.isCompressedContext) {
+    return (
+      <div className="my-5 w-full max-w-4xl mx-auto px-1 sm:px-2 animate-in fade-in duration-200">
+        {/* Visible Horizontal Divider: ──────────────── Conversation compacted ──────────────── */}
+        <div className="flex items-center gap-3 my-3 w-full min-w-0 select-none" role="separator" aria-label="Conversation compacted">
+          <div className="h-px flex-1 bg-slate-300/80" />
+
+          <button
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            className="flex items-center gap-2 bg-white/95 px-3.5 sm:px-4 py-1 text-slate-700 rounded-full border border-slate-300/90 shadow-2xs shrink-0 hover:bg-slate-50 hover:border-slate-400/80 transition cursor-pointer select-none"
+            title={isExpanded ? 'คลิกเพื่อพับเก็บสรุป' : 'คลิกเพื่อแสดงสรุป'}
+          >
+            <Layers className="h-3.5 w-3.5 text-emerald-600" />
+            <span className="text-xs font-semibold tracking-wider text-slate-800">
+              Conversation compacted
+            </span>
+            {message.compressionStats && (
+              <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded">
+                -{message.compressionStats.percentageSaved}%
+              </span>
+            )}
+            <ChevronDown
+              className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
+                isExpanded ? 'rotate-180 text-emerald-600' : ''
+              }`}
+            />
+          </button>
+
+          <div className="h-px flex-1 bg-slate-300/80" />
+        </div>
+
+        {/* Compressed Summary Text - Collapsible, completely seamless, NO background, NO border */}
+        {isExpanded && message.text && (() => {
+          const cleanedText = cleanCompressedSummary(message.text);
+          return (
+            <div className="my-2.5 px-2 sm:px-4 py-1 text-xs text-slate-600 leading-relaxed min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400 mb-2 min-w-0">
+                <span className="text-emerald-700/90 font-semibold min-w-0">
+                  📌 สรุปบริบทเดิมที่บันทึกลงหน่วยความจำ:
+                </span>
+                {message.compressionStats && (
+                  <span className="font-mono text-slate-400 text-[10px] shrink-0">
+                    ลดลง {message.compressionStats.savedTokens.toLocaleString()} tokens
+                  </span>
+                )}
+              </div>
+              <div className="min-w-0 max-w-full text-slate-600 leading-relaxed break-words [overflow-wrap:anywhere] space-y-1.5">
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h3: ({ children }) => (
+                      <h3 className="text-xs font-bold text-slate-700 mt-2 mb-1">{children}</h3>
+                    ),
+                    p: ({ children }) => (
+                      <p className="mb-1.5 last:mb-0 break-words [overflow-wrap:anywhere] leading-relaxed text-slate-600">
+                        {children}
+                      </p>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc pl-4 space-y-1 my-1 text-slate-600 min-w-0">
+                        {children}
+                      </ul>
+                    ),
+                    ol: ({ children }) => (
+                      <ol className="list-decimal pl-4 space-y-1 my-1 text-slate-600 min-w-0">
+                        {children}
+                      </ol>
+                    ),
+                    li: ({ children }) => (
+                      <li className="break-words [overflow-wrap:anywhere] leading-relaxed">{children}</li>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-semibold text-slate-800">{children}</strong>
+                    ),
+                    table: ({ children }) => (
+                      <div className="my-1.5 text-xs text-slate-600 space-y-1">{children}</div>
+                    ),
+                    tr: ({ children }) => (
+                      <div className="flex flex-wrap items-baseline gap-2 py-0.5">{children}</div>
+                    ),
+                    th: ({ children }) => (
+                      <span className="font-semibold text-slate-700">{children}</span>
+                    ),
+                    td: ({ children }) => (
+                      <span className="text-slate-600">{children}</span>
+                    ),
+                  }}
+                >
+                  {cleanedText}
+                </Markdown>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`flex w-full gap-3 py-3 transition-opacity duration-300 min-w-0 ${
         isUser ? 'justify-end' : 'justify-start'
-      }`}
+      } ${message.isCompacted ? 'opacity-80 hover:opacity-100 transition-opacity' : ''}`}
     >
       {/* Bubble Container */}
       <div

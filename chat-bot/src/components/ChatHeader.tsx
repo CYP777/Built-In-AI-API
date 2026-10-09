@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bot, Sliders, SquarePen, AlertCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Bot, Sliders, SquarePen, AlertCircle, RefreshCw, ShieldCheck, FileText } from 'lucide-react';
 import type { AIStatus } from '../services/ai-service';
 
 interface ChatHeaderProps {
@@ -12,6 +12,8 @@ interface ChatHeaderProps {
   onOpenSettings: () => void;
   onRefreshStatus: () => void;
   onOpenPolicy?: () => void;
+  onOpenSummary?: () => void;
+  messagesCount?: number;
   contextTokenUsage?: {
     tokensSoFar: number;
     maxTokens: number;
@@ -28,6 +30,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onOpenSettings,
   onRefreshStatus,
   onOpenPolicy,
+  onOpenSummary,
+  messagesCount = 0,
 }) => {
   const [isSpinning, setIsSpinning] = useState(false);
 
@@ -72,13 +76,17 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <span>กำลังดาวน์โหลดโมเดล</span>
           </div>
         );
-      case 'checking':
+      case 'checking': {
+        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma 4 (GPU)' : 'Gemini Nano (GPU)');
         return (
           <div className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
-            <RefreshCw className="h-3 w-3 animate-spin text-slate-500" />
-            <span>ตรวจสอบระบบ...</span>
+            <span className="relative flex h-2 w-2">
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-slate-400"></span>
+            </span>
+            <span className="tracking-tight">{displayLabel}</span>
           </div>
         );
+      }
       default:
         return (
           <button
@@ -128,11 +136,11 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={isSpinning || status === 'checking'}
+            disabled={isSpinning}
             title="ตรวจสอบสถานะ Built-in AI ใหม่"
             className="flex items-center justify-center p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-slate-100/70 rounded-lg transition active:scale-90 cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning || status === 'checking' ? 'animate-spin text-emerald-600' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning ? 'animate-spin text-emerald-600' : ''}`} />
           </button>
         </div>
 
@@ -159,6 +167,20 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           <Sliders className="h-3.5 w-3.5 text-slate-500" />
           <span className="hidden sm:inline">ตั้งค่า</span>
         </button>
+
+        {/* Summarize Chat button */}
+        {onOpenSummary && (
+          <button
+            type="button"
+            onClick={onOpenSummary}
+            disabled={messagesCount === 0}
+            title={messagesCount === 0 ? 'ยังไม่มีข้อความสำหรับการสรุป' : 'สรุปเนื้อหาบทสนทนา (Summarizer API)'}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:border-teal-300 hover:bg-teal-50/70 hover:text-teal-700 disabled:opacity-40 disabled:hover:bg-white/70 disabled:hover:text-slate-700 disabled:hover:border-slate-200/80 transition active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+          >
+            <FileText className="h-3.5 w-3.5 text-teal-600" />
+            <span className="hidden sm:inline">สรุปแชท</span>
+          </button>
+        )}
 
         {/* New Chat */}
         <button
