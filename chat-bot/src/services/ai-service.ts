@@ -196,19 +196,35 @@ class AIService {
 
         let sessionCreated = false;
 
-        // Try 1: with samplingMode: 'most-predictable' (Chrome 154+ MTP compatible)
-        try {
-          this.session = await this.factory.create({
-            systemPrompt: this.currentSystemPrompt,
-            samplingMode: 'most-predictable',
-          });
-          sessionCreated = true;
-          console.log('AI session created successfully via samplingMode');
-        } catch (e1) {
-          console.warn('Try 1 (samplingMode) failed:', e1);
+        // Try 1: with user options (temperature & topK) if provided
+        if (options?.temperature !== undefined || options?.topK !== undefined) {
+          try {
+            this.session = await this.factory.create({
+              systemPrompt: this.currentSystemPrompt,
+              temperature: options?.temperature,
+              topK: options?.topK,
+            });
+            sessionCreated = true;
+          } catch (eUser) {
+            console.warn('User params session create fallback:', eUser);
+          }
         }
 
-        // Try 2: with topK: 1 (MTP compatible)
+        // Try 2: with samplingMode: 'most-predictable' (Chrome 154+ MTP compatible)
+        if (!sessionCreated) {
+          try {
+            this.session = await this.factory.create({
+              systemPrompt: this.currentSystemPrompt,
+              samplingMode: 'most-predictable',
+            });
+            sessionCreated = true;
+            console.log('AI session created successfully via samplingMode');
+          } catch (e1) {
+            console.warn('Try 2 (samplingMode) failed:', e1);
+          }
+        }
+
+        // Try 3: with topK: 1 (MTP compatible)
         if (!sessionCreated) {
           try {
             this.session = await this.factory.create({
@@ -218,21 +234,7 @@ class AIService {
             sessionCreated = true;
             console.log('AI session created successfully via topK: 1');
           } catch (e2) {
-            console.warn('Try 2 (topK: 1) failed:', e2);
-          }
-        }
-
-        // Try 3: with user options / fallback
-        if (!sessionCreated) {
-          try {
-            this.session = await this.factory.create({
-              systemPrompt: this.currentSystemPrompt,
-              temperature: options?.temperature,
-              topK: options?.topK,
-            });
-            sessionCreated = true;
-          } catch (e3) {
-            console.warn('Try 3 (user options) failed:', e3);
+            console.warn('Try 3 (topK: 1) failed:', e2);
           }
         }
 
@@ -244,6 +246,46 @@ class AIService {
         console.warn('Could not initialize Built-in AI session:', e);
         this.session = null;
       }
+    }
+  }
+
+  public async createIsolatedSession(
+    options?: AILanguageModelCreateOptions
+  ): Promise<AILanguageModelSession | null> {
+    const factory = this.getFactory();
+    if (!factory) return null;
+
+    try {
+      if (options?.temperature !== undefined || options?.topK !== undefined || options?.systemPrompt) {
+        try {
+          return await factory.create(options);
+        } catch (e1) {
+          console.warn('createIsolatedSession with options failed:', e1);
+        }
+      }
+
+      try {
+        return await factory.create({
+          systemPrompt: options?.systemPrompt,
+          samplingMode: 'most-predictable',
+        });
+      } catch (e2) {
+        console.warn('createIsolatedSession with samplingMode failed:', e2);
+      }
+
+      try {
+        return await factory.create({
+          systemPrompt: options?.systemPrompt,
+          topK: 1,
+        });
+      } catch (e3) {
+        console.warn('createIsolatedSession with topK: 1 failed:', e3);
+      }
+
+      return await factory.create();
+    } catch (e) {
+      console.warn('createIsolatedSession failed:', e);
+      return null;
     }
   }
 
@@ -267,26 +309,80 @@ class AIService {
               const stream = this.session.promptStreaming(userMessage, { signal });
               let accumulated = '';
               for await (const chunk of stream as unknown as AsyncIterable<string>) {
-                accumulated += chunk;
+                if (signal?.aborted) break;
+
+                // Handle both cumulative stream (Chrome Built-in AI default) and delta stream
+                if (typeof chunk === 'string') {
+                  if (chunk.startsWith(accumulated)) {
+                    accumulated = chunk; // Cumulative chunk
+                  } else {
+                    accumulated += chunk; // Delta chunk
+                  }
+                }
+
+                // Detect and cut off repetition loop immediately (ดักลูปตัวอักษรซ้ำ เช่น งงงงงงง)
+                const loopCheck = detectRepetitionLoop(accumulated);
+                if (loopCheck.hasLoop) {
+                  accumulated = loopCheck.cleanedText;
+                  onChunk(accumulated);
+                  break; // Cut off the stream immediately!
+                }
+
                 onChunk(accumulated);
               }
               return accumulated;
             } catch (streamErr) {
+              if (signal?.aborted) throw streamErr;
+              const msg = String((streamErr as Error)?.message || '').toLowerCase();
+              const name = String((streamErr as Error)?.name || '');
+              if (
+                name === 'QuotaExceededError' ||
+                name === 'InvalidStateError' ||
+                msg.includes('token') ||
+                msg.includes('quota') ||
+                msg.includes('limit') ||
+                msg.includes('exhaust') ||
+                msg.includes('context')
+              ) {
+                throw streamErr;
+              }
+
               console.warn('promptStreaming error, falling back to prompt():', streamErr);
-              const answer = await this.session.prompt(userMessage, { signal });
+              const rawAnswer = await this.session.prompt(userMessage, { signal });
+              const loopCheck = detectRepetitionLoop(rawAnswer);
+              const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
               onChunk(answer);
               return answer;
             }
           } else {
-            const answer = await this.session.prompt(userMessage, { signal });
+            const rawAnswer = await this.session.prompt(userMessage, { signal });
+            const loopCheck = detectRepetitionLoop(rawAnswer);
+            const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
             onChunk(answer);
             return answer;
           }
         } catch (err: unknown) {
+          if (signal?.aborted) throw err;
+          const msg = String((err as Error)?.message || '').toLowerCase();
+          const name = String((err as Error)?.name || '');
+          if (
+            name === 'QuotaExceededError' ||
+            name === 'InvalidStateError' ||
+            msg.includes('token') ||
+            msg.includes('quota') ||
+            msg.includes('limit') ||
+            msg.includes('exhaust') ||
+            msg.includes('context')
+          ) {
+            throw err;
+          }
+
           console.warn('Prompt error, attempting recreation...', err);
           await this.initSession();
           if (this.session) {
-            const answer = await this.session.prompt(userMessage, { signal });
+            const rawAnswer = await this.session.prompt(userMessage, { signal });
+            const loopCheck = detectRepetitionLoop(rawAnswer);
+            const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
             onChunk(answer);
             return answer;
           }
@@ -304,12 +400,19 @@ class AIService {
     onChunk: (accumulated: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
-    const mockReplies = [
-      `สวัสดีครับ! ได้รับข้อความ "${userMessage}" เรียบร้อยแล้วครับ ขอบคุณที่ทดสอบใช้งาน UI แชทบอทนี้! 😊`,
-      `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล On-Device บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
-      `ข้อความของคุณคือ: "${userMessage}"\n\nระบบแชทบอทนี้พร้อมใช้งานทั้ง:\n1. การตอบแบบ Real-time Streaming\n2. การปรับแต่ง System Prompt\n3. การจัดรูปแบบ **Markdown** อย่างสวยงาม\n4. รองรับทั้ง Desktop และ Mobile`,
-    ];
-    const reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
+    const hasCompressedContext = this.currentSystemPrompt.includes('[บริบทประวัติเดิมที่ถูกบีบอัด]:');
+
+    let reply: string;
+    if (hasCompressedContext) {
+      reply = `เข้าใจแล้วครับ! ผมจำบริบทเดิมจากการสนทนาก่อนหน้าที่ถูกบีบอัดไว้ได้เรียบร้อยแล้ว\n\nสำหรับข้อความล่าสุด: "${userMessage}"\nผมพร้อมตอบคำถามและสนทนาต่ออย่างต่อเนื่องครับ! 😊`;
+    } else {
+      const mockReplies = [
+        `สวัสดีครับ! ได้รับข้อความ "${userMessage}" เรียบร้อยแล้วครับ ขอบคุณที่ทดสอบใช้งาน UI แชทบอทนี้! 😊`,
+        `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล On-Device บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
+        `ข้อความของคุณคือ: "${userMessage}"\n\nระบบแชทบอทนี้พร้อมใช้งานทั้ง:\n1. การตอบแบบ Real-time Streaming\n2. การปรับแต่ง System Prompt\n3. การจัดรูปแบบ **Markdown** อย่างสวยงาม\n4. รองรับทั้ง Desktop และ Mobile`,
+      ];
+      reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
+    }
 
     let current = '';
 
@@ -362,13 +465,18 @@ class AIService {
     tokensLeft: number;
   } {
     const maxTokens = this.session?.maxTokens ?? 4096;
-    let tokensSoFar = this.session?.tokensSoFar ?? 0;
+    let tokensSoFar = 0;
 
-    if (tokensSoFar === 0 && accumulatedChars) {
-      tokensSoFar = Math.ceil(accumulatedChars / 3.2);
+    if (this.session && typeof this.session.tokensSoFar === 'number') {
+      tokensSoFar = this.session.tokensSoFar;
+    } else if (accumulatedChars !== undefined && accumulatedChars > 0) {
+      tokensSoFar = Math.ceil(accumulatedChars / 3.0);
     }
 
-    const tokensLeft = this.session?.tokensLeft ?? Math.max(0, maxTokens - tokensSoFar);
+    const tokensLeft =
+      this.session && typeof this.session.tokensLeft === 'number'
+        ? this.session.tokensLeft
+        : Math.max(0, maxTokens - tokensSoFar);
     return {
       maxTokens,
       tokensSoFar,
@@ -384,6 +492,35 @@ export function estimateTokens(text: string): number {
   const nonThaiCount = text.length - thaiCount;
   const estimated = Math.ceil(thaiCount / 2.8 + nonThaiCount / 4);
   return Math.max(1, estimated);
+}
+
+export function detectRepetitionLoop(text: string): { hasLoop: boolean; cleanedText: string } {
+  if (!text || text.length < 16) {
+    return { hasLoop: false, cleanedText: text };
+  }
+
+  // 1. Single letter or digit repeating 8 or more times (e.g. "งงงงงงงง", "aaaaaaa", "00000000")
+  // Excludes markdown dividers like "--------", "========", "********"
+  const charLoopRegex = /([\p{L}\p{N}])\1{7,}/u;
+  const charMatch = charLoopRegex.exec(text);
+  if (charMatch && charMatch.index !== undefined) {
+    const cutIndex = charMatch.index + 2;
+    const cleaned = text.substring(0, cutIndex);
+    return { hasLoop: true, cleanedText: cleaned };
+  }
+
+  // 2. Real word/phrase of 4-30 chars repeating 4 or more times consecutively
+  // Exclude whitespace/punctuation-only repeats
+  const phraseLoopRegex = /([^\s\p{P}]{4,30}?)\1{3,}/u;
+  const phraseMatch = phraseLoopRegex.exec(text);
+  if (phraseMatch && phraseMatch.index !== undefined) {
+    const phrase = phraseMatch[1];
+    const cutIndex = phraseMatch.index + phrase.length;
+    const cleaned = text.substring(0, cutIndex);
+    return { hasLoop: true, cleanedText: cleaned };
+  }
+
+  return { hasLoop: false, cleanedText: text };
 }
 
 export const aiService = new AIService();

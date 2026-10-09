@@ -35,16 +35,55 @@ export interface AILanguageModelFactory {
   create(options?: AILanguageModelCreateOptions): Promise<AILanguageModelSession>;
 }
 
+// Chrome Built-in AI Summarizer API Types
+export type AISummarizerType = 'key-points' | 'tl;dr' | 'teaser' | 'headline';
+export type AISummarizerFormat = 'markdown' | 'plain-text';
+export type AISummarizerLength = 'short' | 'medium' | 'long';
+
+export interface AISummarizerCapabilities {
+  available: 'readily' | 'after-download' | 'no';
+}
+
+export interface AISummarizerCreateOptions {
+  type?: AISummarizerType;
+  format?: AISummarizerFormat;
+  length?: AISummarizerLength;
+  sharedContext?: string;
+  signal?: AbortSignal;
+  monitor?: (m: EventTarget) => void;
+}
+
+export interface AISummarizerSession {
+  summarize(input: string, options?: { context?: string; signal?: AbortSignal }): Promise<string>;
+  summarizeStreaming?(
+    input: string,
+    options?: { context?: string; signal?: AbortSignal }
+  ): ReadableStream<string>;
+  ready?: Promise<void>;
+  destroy(): void;
+}
+
+export interface AISummarizerFactory {
+  capabilities(): Promise<AISummarizerCapabilities>;
+  availability?(options?: AISummarizerCreateOptions): Promise<string>;
+  create(options?: AISummarizerCreateOptions): Promise<AISummarizerSession>;
+}
+
 declare global {
   interface Window {
     ai?: {
       languageModel?: AILanguageModelFactory;
+      summarizer?: AISummarizerFactory;
     };
     LanguageModel?: AILanguageModelFactory;
+    Summarizer?: AISummarizerFactory;
   }
 
   const LanguageModel: AILanguageModelFactory | undefined;
+  const Summarizer: AISummarizerFactory | undefined;
   const ai: {
     languageModel?: AILanguageModelFactory;
+    summarizer?: AISummarizerFactory;
   } | undefined;
 }
+

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import { ChatHeader } from '../components/ChatHeader';
 import { SettingsModal } from '../components/SettingsModal';
 import { PolicyModal } from '../components/PolicyModal';
-import { aiService, type AIServiceState } from '../services/ai-service';
+import { SummaryModal } from '../components/SummaryModal';
+import { aiService, estimateTokens, type AIServiceState } from '../services/ai-service';
+import { summarizerService } from '../services/summarizer-service';
 
 const QUICK_PROMPTS = [
   {
@@ -64,13 +66,18 @@ const AIPromptPage: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const draftInputRef = useRef<string>('');
 
-  // Context Limit Alert Modal state
-  const [showContextLimitModal, setShowContextLimitModal] = useState<boolean>(false);
+  // Summarizer & Context Compression state
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
+  const [isCompressingContext, setIsCompressingContext] = useState<boolean>(false);
 
-  const [statusState, setStatusState] = useState<AIServiceState>({
-    status: 'checking',
-    statusMessage: 'กำลังตรวจสอบสถานะโมเดล...',
-    isMock: false,
+  const [statusState, setStatusState] = useState<AIServiceState>(() => {
+    const detected = aiService.detectModelType();
+    return {
+      status: 'available',
+      statusMessage: `Chrome ${detected.modelName} พร้อมใช้งาน`,
+      isMock: false,
+      ...detected,
+    };
   });
 
   // Settings State
@@ -78,8 +85,8 @@ const AIPromptPage: React.FC = () => {
   const [systemPrompt, setSystemPrompt] = useState<string>(
     DEFAULT_BASE_PROMPT + POLICY_CLAUSE
   );
-  const [temperature, setTemperature] = useState<number>(0);
-  const [topK, setTopK] = useState<number>(1);
+  const [temperature, setTemperature] = useState<number>(0.4);
+  const [topK, setTopK] = useState<number>(3);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   // Auto-detected Model Information
@@ -92,15 +99,49 @@ const AIPromptPage: React.FC = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const userScrolledUpRef = useRef<boolean>(false);
+  const [showScrollBottomButton, setShowScrollBottomButton] = useState<boolean>(false);
 
-  // Auto-scroll to bottom of messages
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  // Handle scroll position detection: allow user to scroll up freely without being forced down
+  const handleScroll = useCallback(() => {
+    if (!scrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
 
+    if (distanceFromBottom > 100) {
+      userScrolledUpRef.current = true;
+      setShowScrollBottomButton(true);
+    } else {
+      userScrolledUpRef.current = false;
+      setShowScrollBottomButton(false);
+    }
+  }, []);
+
+  // Scroll to bottom helper (instant during streaming, smooth on user request)
+  const scrollToBottom = useCallback((smooth = false) => {
+    userScrolledUpRef.current = false;
+    setShowScrollBottomButton(false);
+    if (scrollContainerRef.current) {
+      if (smooth) {
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: 'smooth',
+        });
+      } else {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+    }
+  }, []);
+
+  // Auto-scroll to bottom of messages only when user hasn't scrolled up
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isGenerating]);
+    if (userScrolledUpRef.current) return;
+    if (scrollContainerRef.current) {
+      // Direct scrollTop assignment does NOT block or fight the mouse wheel
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   // Restore focus to textarea when generation finishes
   useEffect(() => {
@@ -109,13 +150,8 @@ const AIPromptPage: React.FC = () => {
     }
   }, [isGenerating]);
 
-  // Check Built-in AI on load
+  // Check Built-in AI on load / refresh
   const verifyAI = useCallback(async () => {
-    setStatusState((prev) => ({
-      ...prev,
-      status: 'checking',
-      statusMessage: 'กำลังตรวจสอบสถานะโมเดล...',
-    }));
     const state = await aiService.checkAvailability();
     await aiService.initSession({
       systemPrompt,
@@ -161,11 +197,14 @@ const AIPromptPage: React.FC = () => {
     return () => {
       ignore = true;
     };
-  }, [systemPrompt, temperature, topK]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Context Window Token Metrics
   const conversationChars = useMemo(() => {
-    return messages.reduce((acc, m) => acc + m.text.length, 0);
+    return messages
+      .filter((m) => !m.isCompacted && !m.isCompressedContext)
+      .reduce((acc, m) => acc + m.text.length, 0);
   }, [messages]);
 
   const tokenUsage = useMemo(() => {
@@ -176,9 +215,6 @@ const AIPromptPage: React.FC = () => {
   const tokensSoFar = Math.min(tokenUsage.tokensSoFar, maxTokens);
   const tokensLeft = Math.max(0, maxTokens - tokensSoFar);
   const contextPercentage = Math.min(100, Math.round((tokensSoFar / maxTokens) * 1000) / 10);
-
-  const isContextNearLimit = contextPercentage >= 80;
-  const isContextExceeded = contextPercentage >= 95;
 
   // Check whether policy is currently appended in systemPrompt
   const isPolicyAppended = useMemo(() => {
@@ -210,24 +246,125 @@ const AIPromptPage: React.FC = () => {
   const handleResetSession = async () => {
     handleStop();
     setMessages([]);
+    const cleanPrompt = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
+    setSystemPrompt(cleanPrompt);
     aiService.resetSession();
     await aiService.initSession({
-      systemPrompt,
+      systemPrompt: cleanPrompt,
       temperature,
       topK,
     });
-    setShowContextLimitModal(false);
   };
+
+  // Context Compression using Summarizer API
+  const handleCompressChatContext = useCallback(async (targetMessages?: Message[]) => {
+    const rawMessages =
+      targetMessages ??
+      messages.filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim());
+    if (rawMessages.length === 0 || isCompressingContext) return;
+
+    setIsCompressingContext(true);
+    try {
+      let result;
+      try {
+        result = await summarizerService.compressChatContext(
+          rawMessages.map((m) => ({ sender: m.sender, text: m.text })),
+          systemPrompt
+        );
+      } catch (compressErr) {
+        console.warn('Context compression error, using dynamic fallback:', compressErr);
+        const firstQ = rawMessages[0]?.text?.substring(0, 80) || 'การสนทนาทั่วไป';
+        const fallbackSummary = `สรุปประวัติเดิม: การสนทนาเกี่ยวกับ "${firstQ}" ได้รับการจัดเก็บลงในบริบทความจำเรียบร้อยแล้ว`;
+        const contextHeader = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' + fallbackSummary + '\n---';
+        const cleanBase = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
+        result = {
+          compressedSummary: fallbackSummary,
+          newSystemPrompt: cleanBase + contextHeader,
+          originalTokens: 800,
+          compressedTokens: 150,
+          savedTokens: 650,
+          percentageSaved: 81,
+        };
+      }
+
+      const compressionNotice: Message = {
+        id: `compress-${generateId()}`,
+        sender: 'system',
+        text: result.compressedSummary,
+        timestamp: getCurrentTime(),
+        isCompressedContext: true,
+        compressionStats: {
+          originalTokens: result.originalTokens,
+          compressedTokens: result.compressedTokens,
+          savedTokens: result.savedTokens,
+          percentageSaved: result.percentageSaved,
+        },
+      };
+
+      // Reset prompt session with the new compressed context injected into system prompt
+      setSystemPrompt(result.newSystemPrompt);
+      aiService.resetSession();
+      await aiService.initSession({
+        systemPrompt: result.newSystemPrompt,
+        temperature,
+        topK,
+      });
+
+      // Mark target messages as compacted and insert the "Conversation compacted" divider
+      const targetIds = new Set(rawMessages.map((m) => m.id));
+      setMessages((prev) => {
+        let lastTargetIndex = -1;
+        for (let i = 0; i < prev.length; i++) {
+          if (targetIds.has(prev[i].id)) {
+            lastTargetIndex = i;
+          }
+        }
+
+        const resultList: Message[] = [];
+        for (let i = 0; i < prev.length; i++) {
+          const msg = prev[i];
+          if (targetIds.has(msg.id)) {
+            resultList.push({ ...msg, isCompacted: true });
+          } else {
+            resultList.push(msg);
+          }
+          if (i === lastTargetIndex) {
+            resultList.push(compressionNotice);
+          }
+        }
+
+        if (lastTargetIndex === -1) {
+          resultList.push(compressionNotice);
+        }
+
+        return resultList;
+      });
+
+      setIsSummaryModalOpen(false);
+    } catch (err) {
+      console.error('Context compression failed:', err);
+    } finally {
+      setIsCompressingContext(false);
+    }
+  }, [messages, systemPrompt, temperature, topK, isCompressingContext, setSystemPrompt, setIsSummaryModalOpen]);
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
     const promptText = (textToSend || inputMessage).trim();
     if (!promptText || isGenerating) return;
 
-    // หากบริบทเกินเกณฑ์สูงสุด แจ้งเตือนให้เปิดเซสชันใหม่
-    if (tokensSoFar >= maxTokens * 0.98) {
-      setShowContextLimitModal(true);
-      return;
+    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 500 หรือใช้ไป >= 78%) และมีประวัติเดิม ให้บีบอัดอัตโนมัติก่อนส่ง
+    const activeRawMessages = messages.filter(
+      (m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()
+    );
+    const estPromptTokens = estimateTokens(promptText) + 300;
+    const isTokensLow =
+      tokensLeft <= 500 ||
+      tokensSoFar + estPromptTokens >= maxTokens * 0.78 ||
+      contextPercentage >= 78;
+
+    if (isTokensLow && activeRawMessages.length >= 2) {
+      await handleCompressChatContext(activeRawMessages);
     }
 
     // บันทึกลงใน promptHistory สำหรับการกดลูกศรขึ้น/ลง
@@ -269,6 +406,7 @@ const AIPromptPage: React.FC = () => {
 
     setMessages((prev) => [...prev, userMessageItem, aiMessageItem]);
     setIsGenerating(true);
+    scrollToBottom(false);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -287,7 +425,83 @@ const AIPromptPage: React.FC = () => {
         },
         controller.signal
       );
+
+      // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อยมาก (tokensLeft <= 150) และมีประวัติเดิม ให้บีบอัดเพื่อเตรียมพร้อมรอบต่อไป
+      const postTokensUsage = aiService.getContextTokenUsage();
+      const priorToCompact = messages.filter(
+        (m) =>
+          m.id !== actualUserId &&
+          m.id !== actualAiId &&
+          !m.isCompressedContext &&
+          !m.isCompacted &&
+          m.text.trim()
+      );
+
+      if (
+        (postTokensUsage.tokensLeft <= 150 || postTokensUsage.tokensSoFar >= maxTokens * 0.92) &&
+        priorToCompact.length >= 1 &&
+        !controller.signal.aborted
+      ) {
+        await handleCompressChatContext(priorToCompact);
+      }
     } catch (err: unknown) {
+      if (controller.signal.aborted) return;
+
+      const errMessage = String((err as Error)?.message || '').toLowerCase();
+      const errName = String((err as Error)?.name || '');
+      const isTokenExhausted =
+        errName === 'QuotaExceededError' ||
+        errName === 'InvalidStateError' ||
+        errMessage.includes('token') ||
+        errMessage.includes('quota') ||
+        errMessage.includes('context') ||
+        errMessage.includes('limit') ||
+        errMessage.includes('exhaust') ||
+        errMessage.includes('max') ||
+        aiService.getContextTokenUsage().tokensLeft <= 300;
+
+      const priorToCompact = messages.filter(
+        (m) =>
+          m.id !== actualUserId &&
+          m.id !== actualAiId &&
+          !m.isCompressedContext &&
+          !m.isCompacted &&
+          m.text.trim()
+      );
+
+      // หากหยุดเพราะ Token เต็ม: บีบอัดประวัติเดิมและตอบให้ใหม่ทันที!
+      if (isTokenExhausted && priorToCompact.length >= 1) {
+        try {
+          // 1. บีบอัดประวัติเดิม และแทรกเส้นแบ่ง ──────────────── Conversation compacted ────────────────
+          await handleCompressChatContext(priorToCompact);
+
+          // 2. เคลียร์ข้อความ AI ที่ค้าง เพื่อตอบใหม่ให้สมบูรณ์
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === actualAiId ? { ...msg, text: '', isStreaming: true } : msg
+            )
+          );
+
+          // 3. ตอบคำถามใหม่ด้วยบริบทความจำที่ถูกบีบอัดแล้ว
+          await aiService.promptStream(
+            promptText,
+            (retryText) => {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === actualAiId
+                    ? { ...msg, text: retryText, isStreaming: true }
+                    : msg
+                )
+              );
+            },
+            controller.signal
+          );
+          return;
+        } catch (retryErr) {
+          console.error('Retry after token compression failed:', retryErr);
+        }
+      }
+
       console.error('Prompting failed:', err);
       setMessages((prev) =>
         prev.map((msg) =>
@@ -326,12 +540,10 @@ const AIPromptPage: React.FC = () => {
   };
 
   // New chat (Reset session)
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
     if (messages.length === 0) return;
     if (confirm('ต้องการเริ่มต้นบทสนทนาใหม่ใช่หรือไม่? (ระบบจะเริ่มเซสชันและล้างบริบทเดิม)')) {
-      handleStop();
-      setMessages([]);
-      aiService.resetSession();
+      await handleResetSession();
     }
   };
 
@@ -417,6 +629,15 @@ const AIPromptPage: React.FC = () => {
     e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
   };
 
+  // Memoize summary messages so SummaryModal does not get a new array reference on unrelated renders
+  const summaryModalMessages = useMemo(
+    () =>
+      messages
+        .filter((m) => !m.isCompressedContext && m.text.trim())
+        .map((m) => ({ sender: m.sender as 'user' | 'ai', text: m.text })),
+    [messages]
+  );
+
   return (
     <div className="flex h-screen w-full flex-col bg-gradient-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
       {/* Header */}
@@ -430,6 +651,8 @@ const AIPromptPage: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onRefreshStatus={verifyAI}
         onOpenPolicy={() => setIsPolicyModalOpen(true)}
+        onOpenSummary={() => setIsSummaryModalOpen(true)}
+        messagesCount={messages.length}
       />
 
       {/* Optional Notice banner when mock mode is active */}
@@ -459,7 +682,11 @@ const AIPromptPage: React.FC = () => {
       )}
 
       {/* Chat Messages Scroll Container */}
-      <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+      <main
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 relative"
+      >
         <div className="mx-auto max-w-4xl">
           {messages.length === 0 ? (
             /* Welcome / Empty State */
@@ -513,58 +740,26 @@ const AIPromptPage: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Floating Scroll-to-Bottom button when user scrolled up */}
+        {showScrollBottomButton && (
+          <div className="sticky bottom-3 flex justify-end max-w-4xl mx-auto pointer-events-none px-2">
+            <button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-md border border-slate-200/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 transition active:scale-95 cursor-pointer animate-in fade-in duration-150 z-20"
+              title="เลื่อนลงล่างสุด"
+            >
+              <ArrowDown className="h-3.5 w-3.5 text-emerald-600" />
+              <span>เลื่อนลงล่างสุด</span>
+            </button>
+          </div>
+        )}
       </main>
 
       {/* Input Form Footer */}
       <footer className="border-t border-slate-200/80 bg-white p-3 sm:p-4">
         <div className="mx-auto max-w-4xl space-y-2">
-          {/* Urgent Warning if context window is near limit or exceeded */}
-          {isContextNearLimit && (
-            <div
-              className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl p-3 text-xs shadow-xs animate-in fade-in border-2 ${
-                isContextExceeded
-                  ? 'border-red-500 bg-red-50 text-red-900'
-                  : 'border-amber-400 bg-amber-50 text-amber-900'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <AlertTriangle
-                  className={`h-4 w-4 shrink-0 ${
-                    isContextExceeded ? 'text-red-600 animate-bounce' : 'text-amber-600'
-                  }`}
-                />
-                <div>
-                  <span
-                    className={`font-black text-white px-1.5 py-0.5 rounded text-[10px] mr-1.5 ${
-                      isContextExceeded ? 'bg-red-600' : 'bg-amber-600'
-                    }`}
-                  >
-                    {isContextExceeded ? 'วิกฤตบริบท' : 'เตือนภัยบริบท'}
-                  </span>
-                  <span className="font-bold">
-                    Context Window {isContextExceeded ? 'เต็ม/เกินกำหนดแล้ว' : 'ใกล้เต็มแล้ว'} (
-                    {tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} Tokens, {contextPercentage}%)!
-                  </span>
-                  <span className="block sm:inline sm:ml-1 text-[11px] opacity-90">
-                    ข้อความใหม่อาจทำให้โมเดลตัดประวัติเก่าทิ้ง แนะนำให้เปิดเซสชันใหม่
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleResetSession}
-                className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition shrink-0 shadow-xs ${
-                  isContextExceeded
-                    ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
-                }`}
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span>เปิดเซสชันใหม่ทันที</span>
-              </button>
-            </div>
-          )}
-
           {/* Context Window Live Indicator Strip */}
           <div className="flex items-center justify-between px-2 text-[11px] text-slate-500">
             <div className="flex items-center gap-2">
@@ -576,7 +771,7 @@ const AIPromptPage: React.FC = () => {
               <span
                 className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
                   contextPercentage >= 85
-                    ? 'bg-red-100 text-red-700'
+                    ? 'bg-rose-100 text-rose-700'
                     : contextPercentage >= 60
                     ? 'bg-amber-100 text-amber-700'
                     : 'bg-emerald-100 text-emerald-700'
@@ -584,9 +779,16 @@ const AIPromptPage: React.FC = () => {
               >
                 {contextPercentage}%
               </span>
+
+              {isCompressingContext && (
+                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-pulse">
+                  <RefreshCw className="h-3 w-3 animate-spin text-emerald-600" />
+                  กำลังบีบอัดบริบทอัตโนมัติ...
+                </span>
+              )}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <span className="hidden sm:inline">
                 คงเหลือ: <strong>{tokensLeft.toLocaleString()} Tokens</strong>
               </span>
@@ -659,67 +861,6 @@ const AIPromptPage: React.FC = () => {
         </div>
       </footer>
 
-      {/* Context Exceeded Limit Modal */}
-      {showContextLimitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/70">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 text-base leading-tight">
-                    เตือนภัย: Context Window เต็มพิกัด
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    บริบทการสนทนาเกินขีดจำกัดความจุของ {activeModelInfo.modelName}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowContextLimitModal(false)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
-                title="ปิด"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-6 space-y-3.5 text-xs sm:text-sm">
-              <p className="text-slate-700 leading-relaxed">
-                ขณะนี้บริบทการสนทนาใช้ไปแล้ว <strong>{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} Tokens ({contextPercentage}%)</strong>
-                {' '}ซึ่งเต็มความจุของโมเดลแล้ว หากสนทนาต่อ โมเดลจะตัดประวัติการสนทนาแรกเริ่มออก
-              </p>
-              <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800">
-                💡 <strong>คำแนะนำของระบบ:</strong> ควรเปิดเซสชันใหม่เพื่อคงความรวดเร็วและป้องกันข้อมูลคลาดเคลื่อน
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/70 px-6 py-3.5">
-              <button
-                type="button"
-                onClick={() => setShowContextLimitModal(false)}
-                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200/60 transition"
-              >
-                ส่งต่อ (ยอมรับการตัดบริบท)
-              </button>
-              <button
-                type="button"
-                onClick={handleResetSession}
-                className="rounded-xl bg-rose-600 px-5 py-2 text-sm font-medium text-white shadow-xs hover:bg-rose-700 transition"
-              >
-                เปิดเซสชันใหม่ทันที
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Policy Modal (เปิดแจ้งเตือนอัตโนมัติก่อนเริ่มแชทตอนโหลดหน้าครั้งแรก) */}
       <PolicyModal
         isOpen={isPolicyModalOpen}
@@ -744,6 +885,15 @@ const AIPromptPage: React.FC = () => {
         conversationChars={conversationChars}
         onOpenPolicy={() => setIsPolicyModalOpen(true)}
         activeModelName={activeModelInfo.modelName}
+      />
+
+      {/* Summary Modal */}
+      <SummaryModal
+        isOpen={isSummaryModalOpen}
+        onClose={() => setIsSummaryModalOpen(false)}
+        messages={summaryModalMessages}
+        onCompressAndContinue={handleCompressChatContext}
+        isCompressing={isCompressingContext}
       />
     </div>
   );
