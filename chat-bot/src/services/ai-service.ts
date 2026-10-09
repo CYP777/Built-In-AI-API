@@ -5,17 +5,70 @@ import type {
 } from '../types/ai';
 
 export type AIStatus = 'checking' | 'available' | 'downloading' | 'unavailable' | 'mock';
+export type OnDeviceModelType = 'gemini-nano' | 'gemma';
 
 export interface AIServiceState {
   status: AIStatus;
   statusMessage: string;
   isMock: boolean;
+  modelType?: OnDeviceModelType;
+  modelName?: string;
+  hasGpu?: boolean;
 }
 
 class AIService {
   private session: AILanguageModelSession | null = null;
   private factory: AILanguageModelFactory | null = null;
   private currentSystemPrompt: string = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+
+  public detectModelType(): {
+    modelType: OnDeviceModelType;
+    modelName: string;
+    hasGpu: boolean;
+    maxTokens: number;
+  } {
+    const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
+    const maxTokens = this.session?.maxTokens ?? 4096;
+
+    // 1. Inspect explicit session / capabilities metadata if exposed by browser
+    const sessionAny = this.session as unknown as Record<string, unknown> | null;
+    const raw = String(sessionAny?.model || sessionAny?.modelName || '').toLowerCase();
+    if (raw.includes('gemma')) {
+      return {
+        modelType: 'gemma',
+        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        hasGpu,
+        maxTokens,
+      };
+    }
+    if (raw.includes('nano') || raw.includes('gemini')) {
+      return {
+        modelType: 'gemini-nano',
+        modelName: hasGpu ? 'Gemini Nano (GPU)' : 'Gemini Nano',
+        hasGpu,
+        maxTokens,
+      };
+    }
+
+    // 2. Check context window:
+    // Gemini Nano on Chrome is strictly 4,096 tokens, while Gemma on-device has 8,192+
+    if (maxTokens > 4096) {
+      return {
+        modelType: 'gemma',
+        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        hasGpu,
+        maxTokens,
+      };
+    }
+
+    // Default to Gemini Nano (4,096 tokens standard in Chrome Canary/Dev)
+    return {
+      modelType: 'gemini-nano',
+      modelName: hasGpu ? 'Gemini Nano (GPU)' : 'Gemini Nano',
+      hasGpu,
+      maxTokens,
+    };
+  }
 
   public getFactory(): AILanguageModelFactory | null {
     if (typeof window === 'undefined') return null;
@@ -40,6 +93,7 @@ class AIService {
   }
 
   public async checkAvailability(): Promise<AIServiceState> {
+    const detected = this.detectModelType();
     try {
       this.factory = this.getFactory();
 
@@ -48,6 +102,7 @@ class AIService {
           status: 'unavailable',
           statusMessage: 'ไม่พบ Chrome Built-in AI ในเบราว์เซอร์นี้ (สามารถใช้โหมดจำลองได้)',
           isMock: true,
+          ...detected,
         };
       }
 
@@ -56,14 +111,16 @@ class AIService {
         if (capabilities.available === 'readily') {
           return {
             status: 'available',
-            statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+            statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
             isMock: false,
+            ...detected,
           };
         } else if (capabilities.available === 'after-download') {
           return {
             status: 'downloading',
-            statusMessage: 'กำลังดาวน์โหลดโมเดล Gemini Nano บนอุปกรณ์...',
+            statusMessage: `กำลังดาวน์โหลดโมเดล ${detected.modelName} บนอุปกรณ์...`,
             isMock: false,
+            ...detected,
           };
         }
       }
@@ -83,14 +140,16 @@ class AIService {
         if (avail === 'readily' || avail === 'available') {
           return {
             status: 'available',
-            statusMessage: 'Chrome Gemini Nano พร้อมใช้งานบนอุปกรณ์ของคุณ',
+            statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
             isMock: false,
+            ...detected,
           };
         } else if (avail === 'after-download' || avail === 'downloading' || avail === 'downloadable') {
           return {
             status: 'downloading',
-            statusMessage: 'กำลังดาวน์โหลดโมเดล Gemini Nano บนอุปกรณ์...',
+            statusMessage: `กำลังดาวน์โหลดโมเดล ${detected.modelName} บนอุปกรณ์...`,
             isMock: false,
+            ...detected,
           };
         }
       }
@@ -98,8 +157,9 @@ class AIService {
       // If create is available directly
       return {
         status: 'available',
-        statusMessage: 'Chrome Prompt API พร้อมทำงาน',
+        statusMessage: `Chrome Prompt API (${detected.modelName}) พร้อมทำงาน`,
         isMock: false,
+        ...detected,
       };
     } catch (err) {
       console.warn('AI availability check error:', err);
@@ -107,6 +167,7 @@ class AIService {
         status: 'unavailable',
         statusMessage: 'ไม่สามารถเชื่อมต่อโมเดล Built-in AI ได้ (จะเปิดโหมดจำลองเพื่อทดสอบ)',
         isMock: true,
+        ...detected,
       };
     }
   }
@@ -245,7 +306,7 @@ class AIService {
   ): Promise<string> {
     const mockReplies = [
       `สวัสดีครับ! ได้รับข้อความ "${userMessage}" เรียบร้อยแล้วครับ ขอบคุณที่ทดสอบใช้งาน UI แชทบอทนี้! 😊`,
-      `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล Gemini Nano บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
+      `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล On-Device บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
       `ข้อความของคุณคือ: "${userMessage}"\n\nระบบแชทบอทนี้พร้อมใช้งานทั้ง:\n1. การตอบแบบ Real-time Streaming\n2. การปรับแต่ง System Prompt\n3. การจัดรูปแบบ **Markdown** อย่างสวยงาม\n4. รองรับทั้ง Desktop และ Mobile`,
     ];
     const reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
@@ -274,6 +335,55 @@ class AIService {
       this.session = null;
     }
   }
+
+  public getSession(): AILanguageModelSession | null {
+    return this.session;
+  }
+
+  public estimateTokens(text: string): number {
+    return estimateTokens(text);
+  }
+
+  public async countPromptTokens(text: string): Promise<number> {
+    if (!text || !text.trim()) return 0;
+    if (this.session && typeof this.session.countPromptTokens === 'function') {
+      try {
+        return await this.session.countPromptTokens(text);
+      } catch (err) {
+        console.warn('countPromptTokens fallback to estimation:', err);
+      }
+    }
+    return this.estimateTokens(text);
+  }
+
+  public getContextTokenUsage(accumulatedChars?: number): {
+    maxTokens: number;
+    tokensSoFar: number;
+    tokensLeft: number;
+  } {
+    const maxTokens = this.session?.maxTokens ?? 4096;
+    let tokensSoFar = this.session?.tokensSoFar ?? 0;
+
+    if (tokensSoFar === 0 && accumulatedChars) {
+      tokensSoFar = Math.ceil(accumulatedChars / 3.2);
+    }
+
+    const tokensLeft = this.session?.tokensLeft ?? Math.max(0, maxTokens - tokensSoFar);
+    return {
+      maxTokens,
+      tokensSoFar,
+      tokensLeft,
+    };
+  }
+}
+
+export function estimateTokens(text: string): number {
+  if (!text || !text.trim()) return 0;
+  const thaiMatch = text.match(/[\u0E00-\u0E7F]/g);
+  const thaiCount = thaiMatch ? thaiMatch.length : 0;
+  const nonThaiCount = text.length - thaiCount;
+  const estimated = Math.ceil(thaiCount / 2.8 + nonThaiCount / 4);
+  return Math.max(1, estimated);
 }
 
 export const aiService = new AIService();
