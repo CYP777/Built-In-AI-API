@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, Layers, ChevronDown } from 'lucide-react';
+import { Copy, Check, Layers, ChevronDown, X, Download, ZoomIn } from 'lucide-react';
 import { cleanCompressedSummary } from '../services/summarizer-service';
 import { stripMarkdown } from '../utils/markdown';
+import type { ImageAttachment } from '../types/ai';
 
 export interface Message {
   id: string;
@@ -13,6 +15,7 @@ export interface Message {
   isStreaming?: boolean;
   isCompressedContext?: boolean;
   isCompacted?: boolean;
+  imageAttachment?: ImageAttachment;
   compressionStats?: {
     originalTokens: number;
     compressedTokens: number;
@@ -28,7 +31,26 @@ interface ChatMessageProps {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const isUser = message.sender === 'user';
+
+  // Handle Escape key to close image lightbox and prevent background scroll
+  useEffect(() => {
+    if (!isLightboxOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsLightboxOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isLightboxOpen]);
 
   const handleCopy = () => {
     const plainText = stripMarkdown(message.text);
@@ -150,6 +172,106 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-xs shadow-sm shadow-slate-100/80'
         }`}
       >
+        {/* Attached Image Preview if available */}
+        {message.imageAttachment && (
+          <div className="mb-2.5">
+            <button
+              type="button"
+              onClick={() => setIsLightboxOpen(true)}
+              className="group block relative overflow-hidden rounded-xl border border-black/10 bg-black/5 hover:border-emerald-500/50 hover:shadow-md transition cursor-zoom-in max-w-sm text-left"
+              title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
+            >
+              <img
+                src={message.imageAttachment.url}
+                alt={message.imageAttachment.name}
+                className="max-h-64 w-auto rounded-xl object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+              />
+              <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <span className="bg-black/70 text-white text-xs px-2.5 py-1 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow-sm">
+                  <ZoomIn className="w-3.5 h-3.5" />
+                  คลิกเพื่อดูภาพเต็ม
+                </span>
+              </div>
+              <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between gap-1 rounded-lg bg-black/60 px-2 py-1 text-[10px] text-white backdrop-blur-xs opacity-90 group-hover:opacity-100 transition-opacity">
+                <span className="truncate">{message.imageAttachment.name}</span>
+                <span className="shrink-0 opacity-80">
+                  {(message.imageAttachment.size / 1024).toFixed(1)} KB
+                </span>
+              </div>
+            </button>
+
+            {/* Fullscreen Image Lightbox Modal via Portal */}
+            {isLightboxOpen &&
+              typeof document !== 'undefined' &&
+              createPortal(
+                <div
+                  className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-black/90 backdrop-blur-sm p-4 sm:p-6 animate-in fade-in duration-150 select-none"
+                  onClick={() => setIsLightboxOpen(false)}
+                >
+                  {/* Top Bar Controls */}
+                  <div
+                    className="w-full max-w-5xl flex items-center justify-between py-2 px-3 text-white text-sm shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-2 truncate max-w-md">
+                      <span className="font-semibold text-white/90 truncate">
+                        {message.imageAttachment.name}
+                      </span>
+                      <span className="text-xs text-white/60 shrink-0">
+                        ({(message.imageAttachment.size / 1024).toFixed(1)} KB)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Download Button */}
+                      <a
+                        href={message.imageAttachment.url}
+                        download={message.imageAttachment.name}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
+                        title="ดาวน์โหลดรูปภาพนี้"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden sm:inline">ดาวน์โหลด</span>
+                      </a>
+
+                      {/* Close Button */}
+                      <button
+                        type="button"
+                        onClick={() => setIsLightboxOpen(false)}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white transition cursor-pointer"
+                        title="ปิด (Esc)"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Centered Image View */}
+                  <div
+                    className="flex-1 flex items-center justify-center p-2 min-h-0 max-w-full overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <img
+                      src={message.imageAttachment.url}
+                      alt={message.imageAttachment.name}
+                      className="max-h-[82vh] max-w-[92vw] object-contain rounded-xl shadow-2xl cursor-default"
+                    />
+                  </div>
+
+                  {/* Bottom Footer Hint */}
+                  <div
+                    className="py-1 text-center text-xs text-white/50 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    คลิกบริเวณพื้นหลังหรือกด Esc เพื่อปิด
+                  </div>
+                </div>,
+                document.body
+              )}
+          </div>
+        )}
+
         {/* Message Text with Markdown */}
         {message.text && (
           <div className="space-y-1 min-w-0 max-w-full">

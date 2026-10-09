@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
+import type { ImageAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
 import { SettingsModal } from '../components/SettingsModal';
 import { PolicyModal } from '../components/PolicyModal';
@@ -52,6 +53,103 @@ const AIPromptPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Helper to read File into persistent Data URL and set selectedImage
+  const processImageFile = useCallback((file: File, fallbackName?: string) => {
+    if (!file.type.startsWith('image/')) {
+      alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น (เช่น PNG, JPG, WebP, GIF)');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert('ขนาดไฟล์รูปภาพเกินกำหนด (จำกัดไม่เกิน 10 MB)');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setSelectedImage({
+        url: dataUrl,
+        name: file.name || fallbackName || `image-${Date.now()}.png`,
+        size: file.size,
+        type: file.type || 'image/png',
+        file: file,
+      });
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('image/')) {
+          processImageFile(file);
+        }
+      }
+    },
+    [processImageFile]
+  );
+
+  // Handle file select (Image attachment)
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      processImageFile(file);
+    }
+    e.target.value = '';
+  };
+
+  // Handle remove selected image
+  const handleRemoveImage = useCallback(() => {
+    setSelectedImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, []);
+
+  // Handle clipboard image paste (Ctrl + V)
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            processImageFile(file, `clipboard-image-${Date.now()}.png`);
+            break;
+          }
+        }
+      }
+    },
+    [processImageFile]
+  );
 
   // Policy Modal State (เปิดแจ้งเตือนอัตโนมัติเฉพาะเมื่อยังไม่เคยกดยอมรับนโยบาย)
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(() => {
@@ -73,8 +171,8 @@ const AIPromptPage: React.FC = () => {
   const [statusState, setStatusState] = useState<AIServiceState>(() => {
     const detected = aiService.detectModelType();
     return {
-      status: 'available',
-      statusMessage: `Chrome ${detected.modelName} พร้อมใช้งาน`,
+      status: 'checking',
+      statusMessage: `กำลังตรวจสอบ Chrome ${detected.modelName}...`,
       isMock: false,
       ...detected,
     };
@@ -167,7 +265,12 @@ const AIPromptPage: React.FC = () => {
         ...detected,
       });
     } else {
-      setStatusState(state);
+      setStatusState({
+        ...state,
+        status: 'unavailable',
+        isMock: true,
+        statusMessage: 'ไม่สามารถสร้างเซสชัน AI บนอุปกรณ์ได้ (เบราว์เซอร์อยู่ในโหมดจำลอง)',
+      });
     }
   }, [systemPrompt, temperature, topK]);
 
@@ -190,7 +293,12 @@ const AIPromptPage: React.FC = () => {
             ...detected,
           });
         } else {
-          setStatusState(state);
+          setStatusState({
+            ...state,
+            status: 'unavailable',
+            isMock: true,
+            statusMessage: 'ไม่สามารถสร้างเซสชัน AI บนอุปกรณ์ได้ (เบราว์เซอร์อยู่ในโหมดจำลอง)',
+          });
         }
       }
     })();
@@ -204,7 +312,11 @@ const AIPromptPage: React.FC = () => {
   const conversationChars = useMemo(() => {
     return messages
       .filter((m) => !m.isCompacted && !m.isCompressedContext)
-      .reduce((acc, m) => acc + m.text.length, 0);
+      .reduce((acc, m) => {
+        const textLen = m.text ? m.text.length : 0;
+        const imgEquivalentChars = m.imageAttachment ? 1200 : 0; // ~300 tokens per image
+        return acc + textLen + imgEquivalentChars;
+      }, 0);
   }, [messages]);
 
   const tokenUsage = useMemo(() => {
@@ -245,6 +357,7 @@ const AIPromptPage: React.FC = () => {
   // Reset Session
   const handleResetSession = async () => {
     handleStop();
+    setSelectedImage(null);
     setMessages([]);
     const cleanPrompt = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
     setSystemPrompt(cleanPrompt);
@@ -351,13 +464,16 @@ const AIPromptPage: React.FC = () => {
   // Handle Send
   const handleSend = async (textToSend?: string) => {
     const promptText = (textToSend || inputMessage).trim();
-    if (!promptText || isGenerating) return;
+    const currentImage = selectedImage;
+    if ((!promptText && !currentImage) || isGenerating) return;
+
+    const effectiveUserPrompt = promptText || (currentImage ? 'ช่วยวิเคราะห์รูปภาพนี้' : '');
 
     // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 500 หรือใช้ไป >= 78%) และมีประวัติเดิม ให้บีบอัดอัตโนมัติก่อนส่ง
     const activeRawMessages = messages.filter(
       (m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()
     );
-    const estPromptTokens = estimateTokens(promptText) + 300;
+    const estPromptTokens = estimateTokens(effectiveUserPrompt) + 300;
     const isTokensLow =
       tokensLeft <= 500 ||
       tokensSoFar + estPromptTokens >= maxTokens * 0.78 ||
@@ -368,16 +484,19 @@ const AIPromptPage: React.FC = () => {
     }
 
     // บันทึกลงใน promptHistory สำหรับการกดลูกศรขึ้น/ลง
-    setPromptHistory((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1] === promptText) {
-        return prev;
-      }
-      return [...prev, promptText];
-    });
-    setHistoryIndex(-1);
-    draftInputRef.current = '';
+    if (promptText) {
+      setPromptHistory((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1] === promptText) {
+          return prev;
+        }
+        return [...prev, promptText];
+      });
+      setHistoryIndex(-1);
+      draftInputRef.current = '';
+    }
 
     setInputMessage('');
+    setSelectedImage(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -392,8 +511,9 @@ const AIPromptPage: React.FC = () => {
     const userMessageItem: Message = {
       id: actualUserId,
       sender: 'user',
-      text: promptText,
+      text: effectiveUserPrompt,
       timestamp: timeString,
+      imageAttachment: currentImage || undefined,
     };
 
     const aiMessageItem: Message = {
@@ -413,7 +533,7 @@ const AIPromptPage: React.FC = () => {
 
     try {
       await aiService.promptStream(
-        promptText,
+        effectiveUserPrompt,
         (currentText) => {
           setMessages((prev) =>
             prev.map((msg) =>
@@ -423,7 +543,8 @@ const AIPromptPage: React.FC = () => {
             )
           );
         },
-        controller.signal
+        controller.signal,
+        currentImage?.file || null
       );
 
       // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อยมาก (tokensLeft <= 150) และมีประวัติเดิม ให้บีบอัดเพื่อเตรียมพร้อมรอบต่อไป
@@ -469,7 +590,7 @@ const AIPromptPage: React.FC = () => {
           m.text.trim()
       );
 
-      // หากหยุดเพราะ Token เต็ม: บีบอัดประวัติเดิมและตอบให้ใหม่ทันที!
+      // หากหยุดเพราะ Token เต็ม: บีบอัดประวัติเดิม และตอบให้ใหม่ทันที!
       if (isTokenExhausted && priorToCompact.length >= 1) {
         try {
           // 1. บีบอัดประวัติเดิม และแทรกเส้นแบ่ง ──────────────── Conversation compacted ────────────────
@@ -484,7 +605,7 @@ const AIPromptPage: React.FC = () => {
 
           // 3. ตอบคำถามใหม่ด้วยบริบทความจำที่ถูกบีบอัดแล้ว
           await aiService.promptStream(
-            promptText,
+            effectiveUserPrompt,
             (retryText) => {
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -494,7 +615,8 @@ const AIPromptPage: React.FC = () => {
                 )
               );
             },
-            controller.signal
+            controller.signal,
+            currentImage?.file || null
           );
           return;
         } catch (retryErr) {
@@ -809,7 +931,54 @@ const AIPromptPage: React.FC = () => {
           </div>
 
           {/* Textarea Input Container */}
-          <div className="relative rounded-2xl border border-slate-300/80 bg-white p-2 sm:p-2.5 shadow-sm shadow-slate-200/50 focus-within:border-emerald-500 focus-within:ring-3 focus-within:ring-emerald-500/15 focus-within:shadow-md transition-all duration-200">
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`relative rounded-2xl border transition-all duration-200 p-2 sm:p-2.5 shadow-sm ${
+              isDragging
+                ? 'border-emerald-500 bg-emerald-50/50 ring-4 ring-emerald-500/20 shadow-md'
+                : 'border-slate-300/80 bg-white shadow-slate-200/50 focus-within:border-emerald-500 focus-within:ring-3 focus-within:ring-emerald-500/15 focus-within:shadow-md'
+            }`}
+          >
+            {/* Attached Image Preview bar */}
+            {selectedImage && (
+              <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-emerald-200/90 bg-emerald-50/70 p-2 animate-in fade-in duration-150">
+                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-emerald-200 bg-white shadow-2xs">
+                  <img
+                    src={selectedImage.url}
+                    alt={selectedImage.name}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-slate-800">
+                    {selectedImage.name}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    {(selectedImage.size / 1024).toFixed(1)} KB • รองรับ Multimodal (Vision)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveImage}
+                  title="ลบรูปภาพที่เลือก"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-emerald-100/80 hover:text-slate-700 transition cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Hidden File Input for images */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+
             <div className="flex items-end gap-2">
               {/* Textarea */}
               <textarea
@@ -819,18 +988,33 @@ const AIPromptPage: React.FC = () => {
                 autoFocus
                 onChange={handleInput}
                 onKeyDown={handleKeyDown}
-                placeholder="พิมพ์ข้อความของคุณที่นี่... (Enter เพื่อส่ง, กด ↑ / ↓ เพื่อเลือกประวัติคำสั่ง)"
+                onPaste={handlePaste}
+                placeholder="พิมพ์ข้อความของคุณที่นี่... (Enter เพื่อส่ง, แนบรูป หรือ Ctrl+V เพื่อวางรูป)"
                 className="max-h-40 min-h-10 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
               />
 
               {/* Action Buttons */}
               <div className="flex shrink-0 items-center gap-1.5 pb-0.5">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isGenerating}
+                  title="แนบรูปภาพ (หรือกด Ctrl+V เพื่อวางรูป)"
+                  className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer ${
+                    selectedImage
+                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/40 hover:text-emerald-700'
+                  } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <ImageIcon className="h-4 w-4" />
+                </button>
+
                 {isGenerating ? (
                   <button
                     type="button"
                     onClick={handleStop}
                     title="หยุดการสร้างข้อความ"
-                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs hover:bg-rose-600 active:scale-95 transition"
+                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs hover:bg-rose-600 active:scale-95 transition cursor-pointer"
                   >
                     <Square className="h-4 w-4 fill-white" />
                   </button>
@@ -838,7 +1022,7 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleSend()}
-                    disabled={!inputMessage.trim()}
+                    disabled={!inputMessage.trim() && !selectedImage}
                     title="ส่งข้อความ"
                     className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-30 disabled:hover:bg-emerald-600 disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed"
                   >
@@ -850,10 +1034,10 @@ const AIPromptPage: React.FC = () => {
           </div>
 
           <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-400">
-            <span>Powered by Chrome Built-in AI / Prompt API</span>
+            <span>Powered by Chrome Built-in AI / Prompt API (Multimodal)</span>
             <div className="flex items-center gap-2">
               <span className="hidden sm:inline text-slate-400">
-                (กด ↑ / ↓ เพื่อเลือกประวัติคำสั่ง)
+                (กด ↑ / ↓ เพื่อเลือกประวัติ • วางรูปภาพด้วย Ctrl+V)
               </span>
               <span>{inputMessage.length > 0 ? `${inputMessage.length} ตัวอักษร` : ''}</span>
             </div>
