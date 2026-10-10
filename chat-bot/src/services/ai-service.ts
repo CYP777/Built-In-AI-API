@@ -22,8 +22,13 @@ export interface AIServiceState {
 class AIService {
   private session: AILanguageModelSession | null = null;
   private factory: AILanguageModelFactory | null = null;
-  private currentSystemPrompt: string = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+  private currentSystemPrompt: string = '';
   private isMultimodalSupported: boolean | null = null;
+
+  public getDefaultSystemPrompt(modelName?: string): string {
+    const name = modelName || this.detectModelType().modelName;
+    return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
+  }
 
   public async checkMultimodalSupport(): Promise<boolean> {
     if (this.isMultimodalSupported !== null) {
@@ -67,7 +72,7 @@ class AIService {
     if (raw.includes('gemma')) {
       return {
         modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
         hasGpu,
         maxTokens,
       };
@@ -86,16 +91,16 @@ class AIService {
     if (maxTokens > 4096) {
       return {
         modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
         hasGpu,
         maxTokens,
       };
     }
 
-    // Default to Gemini Nano (4,096 tokens standard in Chrome Canary/Dev)
+    // Default to Gemma (standard on-device component in Chrome 138+)
     return {
-      modelType: 'gemini-nano',
-      modelName: hasGpu ? 'Gemini Nano (GPU)' : 'Gemini Nano',
+      modelType: 'gemma',
+      modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
       hasGpu,
       maxTokens,
     };
@@ -225,6 +230,8 @@ class AIService {
 
     if (options?.systemPrompt) {
       this.currentSystemPrompt = options.systemPrompt;
+    } else if (!this.currentSystemPrompt) {
+      this.currentSystemPrompt = this.getDefaultSystemPrompt();
     }
 
     if (this.factory) {
@@ -549,7 +556,7 @@ class AIService {
         `⚠️ **ไม่สามารถประมวลผลรูปภาพด้วยโมเดล On-Device ได้ในขณะนี้**\n\n` +
         `- **ไฟล์ที่แนบมา**: \`${fileName}\` (${fileSizeKb} KB, \`${fileType}\`)\n` +
         `- **สาเหตุ**: เซสชันของโมเดล AI บน Chrome ในเครื่องยังไม่พร้อมทำงานจริง\n\n` +
-        `กรุณาตรวจสอบว่าสถานะ Built-in AI ที่แถบด้านบนขึ้นเป็นสีเขียว "Chrome Gemini Nano พร้อมใช้งาน" เพื่อให้โมเดล AI ในเครื่องเป็นผู้มองเห็นและวิเคราะห์รูปภาพจริงครับ`;
+        `กรุณาตรวจสอบว่าสถานะ Built-in AI ที่แถบด้านบนขึ้นเป็นสีเขียว เพื่อให้โมเดล AI ในเครื่องเป็นผู้มองเห็นและวิเคราะห์รูปภาพจริงครับ`;
     } else if (hasCompressedContext) {
       reply = `เข้าใจแล้วครับ! ผมจำบริบทเดิมจากการสนทนาก่อนหน้าที่ถูกบีบอัดไว้ได้เรียบร้อยแล้ว\n\nสำหรับข้อความล่าสุด: "${userMessage}"\nผมพร้อมตอบคำถามและสนทนาต่ออย่างต่อเนื่องครับ! 😊`;
     } else {
@@ -605,7 +612,7 @@ class AIService {
           `};\n` +
           `\`\`\`\n\n` +
           `---\n` +
-          `> 💡 *หมายเหตุ (โหมดจำลอง Mock Mode): ขณะนี้เบราว์เซอร์ทำงานในโหมดจำลอง หากเปิดใช้งาน Chrome Prompt API บนเครื่อง ระบบจะประมวลผลผ่านโมเดล Gemini Nano บนเครื่องจริงครับ*`;
+          `> 💡 *หมายเหตุ (โหมดจำลอง Mock Mode): ขณะนี้เบราว์เซอร์ทำงานในโหมดจำลอง หากเปิดใช้งาน Chrome Prompt API บนเครื่อง ระบบจะประมวลผลผ่านโมเดล On-Device AI (${this.detectModelType().modelName}) บนเครื่องจริงครับ*`;
       } else if (
         lower.includes('built-in ai') ||
         lower.includes('prompt api') ||
@@ -613,7 +620,7 @@ class AIService {
       ) {
         reply =
           `### 🌐 Chrome Built-in AI (Prompt API) คืออะไร?\n\n` +
-          `**Chrome Built-in AI** คือความสามารถใหม่ของ Google Chrome ที่ผนวกรวมโมเดล AI (เช่น **Gemini Nano**) เข้ามาไว้ในตัวเบราว์เซอร์ ทำให้นักพัฒนาสามารถเรียกใช้งานผ่าน JavaScript API ได้โดยตรงโดยไม่ต้องติดตั้งไลบรารีขนาดใหญ่หรือส่งข้อมูลขึ้น Cloud Server\n\n` +
+          `**Chrome Built-in AI** คือความสามารถใหม่ของ Google Chrome ที่ผนวกรวมโมเดล AI (เช่น **Gemma / Gemini Nano**) เข้ามาไว้ในตัวเบราว์เซอร์ ทำให้นักพัฒนาสามารถเรียกใช้งานผ่าน JavaScript API ได้โดยตรงโดยไม่ต้องติดตั้งไลบรารีขนาดใหญ่หรือส่งข้อมูลขึ้น Cloud Server\n\n` +
           `### 📊 เปรียบเทียบ Built-in AI vs Cloud AI\n\n` +
           `| คุณสมบัติ | Built-in AI (On-Device) | Cloud AI (เช่น OpenAI, Gemini API) |\n` +
           `| :--- | :--- | :--- |\n` +
@@ -649,7 +656,7 @@ class AIService {
         const mockReplies = [
           `ได้รับข้อความ: "${userMessage}" เรียบร้อยแล้วครับ\n\n` +
             `> ⚠️ **ระบบกำลังทำงานในโหมดจำลอง (Mock Mode)**\n` +
-            `> เนื่องจากเบราว์เซอร์ปัจจุบันยังไม่ได้เปิดใช้งาน Chrome Prompt API (Gemini Nano)\n\n` +
+            `> เนื่องจากเบราว์เซอร์ปัจจุบันยังไม่ได้เปิดใช้งาน Chrome Prompt API (Gemma / Gemini Nano)\n\n` +
             `**หากต้องการใช้งานโมเดล AI จริงในเครื่อง กรุณาเปิดใช้งาน Flags ดังนี้:**\n` +
             `1. เปิด \`chrome://flags/#prompt-api-for-gemini-nano\` → เลือก **Enabled**\n` +
             `2. เปิด \`chrome://flags/#optimization-guide-on-device-model\` → เลือก **Enabled BypassPerfRequirement**\n` +

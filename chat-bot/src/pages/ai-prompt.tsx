@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import type { ImageAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
@@ -8,6 +8,7 @@ import { PolicyModal } from '../components/PolicyModal';
 import { SummaryModal } from '../components/SummaryModal';
 import { aiService, estimateTokens, type AIServiceState } from '../services/ai-service';
 import { summarizerService } from '../services/summarizer-service';
+import { speechService } from '../services/speech-service';
 
 const QUICK_PROMPTS = [
   {
@@ -35,7 +36,10 @@ const QUICK_PROMPTS = [
 const POLICY_MARKER = '[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]';
 const POLICY_CLAUSE =
   '\n\n[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]: ต้องตอบโดยยึดหลักข้อเท็จจริงและความเป็นกลาง ตรวจสอบความถูกต้องอย่างรอบคอบ ปฏิเสธข้อมูลที่ผิดกฎหมายหรือสร้างความเกลียดชัง และไม่แต่งเติมข้อมูลเท็จอย่างเด็ดขาด';
-const DEFAULT_BASE_PROMPT = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+const getDefaultBasePrompt = (modelName?: string): string => {
+  const name = modelName || 'Gemma';
+  return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
+};
 const POLICY_ACCEPTED_KEY = 'ai_safety_policy_accepted';
 
 function generateId(): string {
@@ -55,6 +59,13 @@ const AIPromptPage: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const userScrolledUpRef = useRef<boolean>(false);
+  const draftInputRef = useRef<string>('');
+  const speechBaseTextRef = useRef<string>('');
 
   // Helper to read File into persistent Data URL and set selectedImage
   const processImageFile = useCallback((file: File, fallbackName?: string) => {
@@ -151,6 +162,71 @@ const AIPromptPage: React.FC = () => {
     [processImageFile]
   );
 
+  // Speech Recognition (Voice Input) State with On-Device Small Expert Model support
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [speechLang, setSpeechLang] = useState<'th-TH' | 'en-US'>('th-TH');
+  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [isSpeechSupported] = useState<boolean>(() => speechService.isSupported());
+  const [isLocalSpeechSupported] = useState<boolean>(() => speechService.isProcessLocallySupported());
+
+  // Toggle voice listening
+  const handleToggleListening = () => {
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setInterimTranscript('');
+      return;
+    }
+
+    speechBaseTextRef.current = inputMessage.trim();
+
+    const started = speechService.startListening(
+      {
+        onStart: () => {
+          setIsListening(true);
+        },
+        onInterim: (text) => {
+          setInterimTranscript(text);
+        },
+        onFinal: (text) => {
+          const base = speechBaseTextRef.current;
+          setInputMessage(base ? `${base} ${text}` : text);
+          setInterimTranscript('');
+          if (textareaRef.current) {
+            setTimeout(() => {
+              if (textareaRef.current) {
+                textareaRef.current.style.height = 'auto';
+                textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+                textareaRef.current.focus();
+              }
+            }, 50);
+          }
+        },
+        onError: (err) => {
+          alert(err);
+          setIsListening(false);
+          setInterimTranscript('');
+        },
+        onEnd: () => {
+          setIsListening(false);
+          setInterimTranscript('');
+        },
+      },
+      { lang: speechLang, preferLocal: true }
+    );
+
+    if (!started) {
+      setIsListening(false);
+    }
+  };
+
+  // Clean up speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      speechService.stopListening();
+    };
+  }, []);
+
   // Policy Modal State (เปิดแจ้งเตือนอัตโนมัติเฉพาะเมื่อยังไม่เคยกดยอมรับนโยบาย)
   const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -162,7 +238,6 @@ const AIPromptPage: React.FC = () => {
   // Prompt History state สำหรับปุ่มลูกศรขึ้น/ลง (Arrow Up / Down)
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const draftInputRef = useRef<string>('');
 
   // Summarizer & Context Compression state
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
@@ -180,9 +255,10 @@ const AIPromptPage: React.FC = () => {
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [systemPrompt, setSystemPrompt] = useState<string>(
-    DEFAULT_BASE_PROMPT + POLICY_CLAUSE
-  );
+  const [systemPrompt, setSystemPrompt] = useState<string>(() => {
+    const detected = aiService.detectModelType();
+    return getDefaultBasePrompt(detected.modelName) + POLICY_CLAUSE;
+  });
   const [temperature, setTemperature] = useState<number>(0.4);
   const [topK, setTopK] = useState<number>(3);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
@@ -194,11 +270,6 @@ const AIPromptPage: React.FC = () => {
     return aiService.detectModelType();
   }, [statusState.status]);
 
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const scrollContainerRef = useRef<HTMLElement | null>(null);
-  const userScrolledUpRef = useRef<boolean>(false);
   const [showScrollBottomButton, setShowScrollBottomButton] = useState<boolean>(false);
 
   // Handle scroll position detection: allow user to scroll up freely without being forced down
@@ -251,13 +322,18 @@ const AIPromptPage: React.FC = () => {
   // Check Built-in AI on load / refresh
   const verifyAI = useCallback(async () => {
     const state = await aiService.checkAvailability();
+    const detected = aiService.detectModelType();
+    const isDefaultBase = systemPrompt.includes('คุณคือผู้ช่วย AI อัจฉริยะ');
+    const dynamicPrompt = isDefaultBase
+      ? getDefaultBasePrompt(detected.modelName) + (systemPrompt.includes(POLICY_MARKER) ? POLICY_CLAUSE : '')
+      : systemPrompt;
+
     await aiService.initSession({
-      systemPrompt,
+      systemPrompt: dynamicPrompt,
       temperature,
       topK,
     });
     if (aiService.hasActiveSession()) {
-      const detected = aiService.detectModelType();
       setStatusState({
         status: 'available',
         statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
@@ -278,14 +354,18 @@ const AIPromptPage: React.FC = () => {
     let ignore = false;
     (async () => {
       const state = await aiService.checkAvailability();
-      await aiService.initSession({
-        systemPrompt,
-        temperature,
-        topK,
-      });
+      const detected = aiService.detectModelType();
+      const dynamicPrompt = getDefaultBasePrompt(detected.modelName) + POLICY_CLAUSE;
+
       if (!ignore) {
+        setSystemPrompt(dynamicPrompt);
+        await aiService.initSession({
+          systemPrompt: dynamicPrompt,
+          temperature,
+          topK,
+        });
+
         if (aiService.hasActiveSession()) {
-          const detected = aiService.detectModelType();
           setStatusState({
             status: 'available',
             statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
@@ -357,6 +437,11 @@ const AIPromptPage: React.FC = () => {
   // Reset Session
   const handleResetSession = async () => {
     handleStop();
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setInterimTranscript('');
+    }
     setSelectedImage(null);
     setMessages([]);
     const cleanPrompt = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
@@ -463,6 +548,13 @@ const AIPromptPage: React.FC = () => {
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
+    // If voice listening is active, stop it gracefully
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setInterimTranscript('');
+    }
+
     const promptText = (textToSend || inputMessage).trim();
     const currentImage = selectedImage;
     if ((!promptText && !currentImage) || isGenerating) return;
@@ -970,6 +1062,57 @@ const AIPromptPage: React.FC = () => {
               </div>
             )}
 
+            {/* Active Speech Recognition Banner */}
+            {isListening && (
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-rose-200/90 bg-rose-50/90 p-2 text-xs text-rose-800 animate-in fade-in duration-150">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <span className="flex h-3 w-3 relative shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                  </span>
+                  <span className="font-semibold shrink-0 text-rose-700">กำลังฟังเสียง:</span>
+                  <span className="truncate text-rose-900 font-medium italic">
+                    {interimTranscript || 'เริ่มพูดข้อความของคุณได้เลย...'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Language switch button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSpeechLang((prev) => (prev === 'th-TH' ? 'en-US' : 'th-TH'));
+                      speechService.stopListening();
+                      setIsListening(false);
+                      setInterimTranscript('');
+                    }}
+                    className="rounded-lg bg-white border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                    title="สลับภาษาพูดระหว่าง ภาษาไทย และ English"
+                  >
+                    {speechLang === 'th-TH' ? '🇹🇭 ไทย' : '🇺🇸 EN'}
+                  </button>
+
+                  {speechLang.startsWith('en') && isLocalSpeechSupported && (
+                    <span
+                      className="hidden sm:inline-block rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300/80 px-1.5 py-0.5 text-[10px] font-medium"
+                      title="ประมวลผลเสียงภาษาอังกฤษบนเครื่อง On-Device ด้วย Small Expert Model"
+                    >
+                      On-Device Model
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleToggleListening}
+                    className="flex h-6 w-6 items-center justify-center rounded-lg text-rose-500 hover:bg-rose-200/60 transition cursor-pointer"
+                    title="หยุดบันทึกเสียง"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Hidden File Input for images */}
             <input
               ref={fileInputRef}
@@ -989,12 +1132,33 @@ const AIPromptPage: React.FC = () => {
                 onChange={handleInput}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder="พิมพ์ข้อความของคุณที่นี่... (Enter เพื่อส่ง, แนบรูป หรือ Ctrl+V เพื่อวางรูป)"
+                placeholder="พิมพ์ข้อความของคุณที่นี่... (Enter เพื่อส่ง, แนบรูป หรือ Ctrl+V เพื่อวางรูป, กด 🎙️ เพื่อพูด)"
                 className="max-h-40 min-h-10 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
               />
 
               {/* Action Buttons */}
               <div className="flex shrink-0 items-center gap-1.5 pb-0.5">
+                {/* Voice Input (Speech-to-Text) Button */}
+                <button
+                  type="button"
+                  onClick={handleToggleListening}
+                  disabled={isGenerating || !isSpeechSupported}
+                  title={
+                    !isSpeechSupported
+                      ? 'เบราว์เซอร์นี้ไม่รองรับระบบ Speech Recognition'
+                      : isListening
+                      ? 'กำลังฟังเสียง... (คลิกเพื่อหยุด)'
+                      : `พิมพ์ด้วยเสียง (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
+                  }
+                  className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer ${
+                    isListening
+                      ? 'border-rose-500 bg-rose-500 text-white shadow-sm ring-2 ring-rose-400/40 animate-pulse'
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/40 hover:text-emerald-700'
+                  } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </button>
+
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -1037,7 +1201,7 @@ const AIPromptPage: React.FC = () => {
             <span>Powered by Chrome Built-in AI / Prompt API (Multimodal)</span>
             <div className="flex items-center gap-2">
               <span className="hidden sm:inline text-slate-400">
-                (กด ↑ / ↓ เพื่อเลือกประวัติ • วางรูปภาพด้วย Ctrl+V)
+                (กด ↑ / ↓ เพื่อเลือกประวัติ • วางรูป Ctrl+V • กด 🎙️ เพื่อพูด)
               </span>
               <span>{inputMessage.length > 0 ? `${inputMessage.length} ตัวอักษร` : ''}</span>
             </div>
@@ -1052,6 +1216,7 @@ const AIPromptPage: React.FC = () => {
         onAccept={handleAcceptPolicy}
         onAppendToPrompt={handleTogglePolicyInPrompt}
         isAppended={isPolicyAppended}
+        modelName={activeModelInfo.modelName}
       />
 
       {/* Settings Modal */}
@@ -1078,6 +1243,7 @@ const AIPromptPage: React.FC = () => {
         messages={summaryModalMessages}
         onCompressAndContinue={handleCompressChatContext}
         isCompressing={isCompressingContext}
+        modelName={activeModelInfo.modelName}
       />
     </div>
   );

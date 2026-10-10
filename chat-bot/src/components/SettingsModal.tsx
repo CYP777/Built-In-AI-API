@@ -52,7 +52,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ตั้งค่าโมเดล AI (Model Settings)
               </h3>
               <p className="text-[11px] text-slate-500">
-                {activeModelName || 'Gemini Nano (GPU)'} • ปรับแต่งพารามิเตอร์ของโมเดล
+                {activeModelName || 'Gemma (GPU)'} • ปรับแต่งพารามิเตอร์ของโมเดล
               </p>
             </div>
           </div>
