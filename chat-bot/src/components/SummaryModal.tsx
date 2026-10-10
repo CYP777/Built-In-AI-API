@@ -28,6 +28,7 @@ interface SummaryModalProps {
   messages: Array<{ sender: 'user' | 'ai'; text: string }>;
   onCompressAndContinue?: () => Promise<void>;
   isCompressing?: boolean;
+  modelName?: string;
 }
 
 export const SummaryModal: React.FC<SummaryModalProps> = ({
@@ -36,6 +37,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   messages,
   onCompressAndContinue,
   isCompressing = false,
+  modelName,
 }) => {
   const [summaryType, setSummaryType] = useState<AISummarizerType>('key-points');
   const [summaryLength, setSummaryLength] = useState<AISummarizerLength>('medium');
@@ -180,7 +182,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                 ) : activeEngine === 'prompt-api' || (!activeEngine && engineState.status === 'fallback-prompt') ? (
                   <span className="flex items-center gap-1 rounded-md bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800">
                     <Cpu className="h-3 w-3" />
-                    Gemini Nano
+                    {modelName || 'Gemma'}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">

@@ -50,10 +50,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const getStatusBadge = () => {
     switch (status) {
       case 'available': {
-        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma 4 (GPU)' : 'Gemini Nano (GPU)');
+        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma (GPU)' : 'Gemini Nano (GPU)');
         const tooltip =
           modelType === 'gemma'
-            ? 'โมเดล On-Device บนเครื่อง: Gemma 4 (รันผ่าน GPU)'
+            ? 'โมเดล On-Device บนเครื่อง: Gemma (รันผ่าน GPU)'
             : 'โมเดล On-Device บนเครื่อง: Gemini Nano (รันผ่าน GPU nano_v3_gpu)';
 
         return (
@@ -77,7 +77,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           </div>
         );
       case 'checking': {
-        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma 4 (GPU)' : 'Gemini Nano (GPU)');
+        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma (GPU)' : 'Gemini Nano (GPU)');
         return (
           <div className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
             <span className="relative flex h-2 w-2">

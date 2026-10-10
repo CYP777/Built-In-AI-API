@@ -2,6 +2,8 @@ import type {
   AILanguageModelFactory,
   AILanguageModelSession,
   AILanguageModelCreateOptions,
+  AIMultimodalPart,
+  AIPromptInput,
 } from '../types/ai';
 
 export type AIStatus = 'checking' | 'available' | 'downloading' | 'unavailable' | 'mock';
@@ -14,12 +16,46 @@ export interface AIServiceState {
   modelType?: OnDeviceModelType;
   modelName?: string;
   hasGpu?: boolean;
+  isMultimodal?: boolean;
 }
 
 class AIService {
   private session: AILanguageModelSession | null = null;
   private factory: AILanguageModelFactory | null = null;
-  private currentSystemPrompt: string = 'คุณคือผู้ช่วย AI อัจฉริยะที่ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร';
+  private currentSystemPrompt: string = '';
+  private isMultimodalSupported: boolean | null = null;
+
+  public getDefaultSystemPrompt(modelName?: string): string {
+    const name = modelName || this.detectModelType().modelName;
+    return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
+  }
+
+  public async checkMultimodalSupport(): Promise<boolean> {
+    if (this.isMultimodalSupported !== null) {
+      return this.isMultimodalSupported;
+    }
+
+    this.factory = this.getFactory();
+    if (!this.factory) {
+      this.isMultimodalSupported = false;
+      return false;
+    }
+
+    try {
+      if (typeof this.factory.availability === 'function') {
+        const avail = await this.factory.availability({
+          expectedInputs: [{ type: 'text' }, { type: 'image' }],
+        });
+        this.isMultimodalSupported = avail === 'readily' || avail === 'available';
+        return this.isMultimodalSupported;
+      }
+    } catch {
+      // ignore
+    }
+
+    this.isMultimodalSupported = false;
+    return false;
+  }
 
   public detectModelType(): {
     modelType: OnDeviceModelType;
@@ -36,7 +72,7 @@ class AIService {
     if (raw.includes('gemma')) {
       return {
         modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
         hasGpu,
         maxTokens,
       };
@@ -55,16 +91,16 @@ class AIService {
     if (maxTokens > 4096) {
       return {
         modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma 4 (GPU)' : 'Gemma 4',
+        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
         hasGpu,
         maxTokens,
       };
     }
 
-    // Default to Gemini Nano (4,096 tokens standard in Chrome Canary/Dev)
+    // Default to Gemma (standard on-device component in Chrome 138+)
     return {
-      modelType: 'gemini-nano',
-      modelName: hasGpu ? 'Gemini Nano (GPU)' : 'Gemini Nano',
+      modelType: 'gemma',
+      modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
       hasGpu,
       maxTokens,
     };
@@ -79,6 +115,13 @@ class AIService {
 
     if (typeof ai !== 'undefined' && ai?.languageModel) {
       return ai.languageModel;
+    }
+
+    const winAny = window as unknown as Record<string, unknown>;
+    if (winAny.ai && typeof winAny.ai === 'object') {
+      const aiObj = winAny.ai as Record<string, unknown>;
+      if (aiObj.languageModel) return aiObj.languageModel as AILanguageModelFactory;
+      if (aiObj.assistant) return aiObj.assistant as AILanguageModelFactory;
     }
 
     if (typeof window.LanguageModel !== 'undefined') {
@@ -151,14 +194,20 @@ class AIService {
             isMock: false,
             ...detected,
           };
+        } else if (avail === 'no' || avail === 'unavailable') {
+          return {
+            status: 'unavailable',
+            statusMessage: 'โมเดล On-Device ยังไม่พร้อมทำงานบนเบราว์เซอร์นี้ (Not Supported)',
+            isMock: true,
+            ...detected,
+          };
         }
       }
 
-      // If create is available directly
       return {
-        status: 'available',
-        statusMessage: `Chrome Prompt API (${detected.modelName}) พร้อมทำงาน`,
-        isMock: false,
+        status: 'unavailable',
+        statusMessage: 'ไม่สามารถเชื่อมต่อโมเดล Built-in AI ได้ในขณะนี้',
+        isMock: true,
         ...detected,
       };
     } catch (err) {
@@ -181,6 +230,8 @@ class AIService {
 
     if (options?.systemPrompt) {
       this.currentSystemPrompt = options.systemPrompt;
+    } else if (!this.currentSystemPrompt) {
+      this.currentSystemPrompt = this.getDefaultSystemPrompt();
     }
 
     if (this.factory) {
@@ -197,7 +248,7 @@ class AIService {
         let sessionCreated = false;
 
         // Try 1: with user options (temperature & topK) if provided
-        if (options?.temperature !== undefined || options?.topK !== undefined) {
+        if (!sessionCreated && (options?.temperature !== undefined || options?.topK !== undefined)) {
           try {
             this.session = await this.factory.create({
               systemPrompt: this.currentSystemPrompt,
@@ -292,7 +343,8 @@ class AIService {
   public async promptStream(
     userMessage: string,
     onChunk: (chunkText: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    imageFile?: File | Blob | null
   ): Promise<string> {
     this.factory = this.getFactory();
 
@@ -302,11 +354,55 @@ class AIService {
         await this.initSession();
       }
 
-      if (this.session) {
+      // If an image is attached, create/use multimodal session
+      let sessionToUse = this.session;
+      let isolatedMultimodalSession: AILanguageModelSession | null = null;
+
+      if (imageFile) {
         try {
-          if (typeof this.session.promptStreaming === 'function') {
+          isolatedMultimodalSession = await this.factory.create({
+            systemPrompt: this.currentSystemPrompt,
+            expectedInputs: [{ type: 'text' }, { type: 'image' }],
+          });
+          sessionToUse = isolatedMultimodalSession;
+        } catch (e) {
+          console.warn('Dedicated multimodal session creation fallback:', e);
+        }
+      }
+
+      if (sessionToUse) {
+        try {
+          let promptPayload: AIPromptInput = userMessage;
+
+          if (imageFile) {
+            promptPayload = [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                  { type: 'image', value: imageFile },
+                ],
+              },
+            ];
+          }
+
+          if (typeof sessionToUse.promptStreaming === 'function') {
             try {
-              const stream = this.session.promptStreaming(userMessage, { signal });
+              let stream: ReadableStream<string>;
+              try {
+                stream = sessionToUse.promptStreaming(promptPayload, { signal });
+              } catch (payloadErr) {
+                if (imageFile) {
+                  const flatParts: Array<AIMultimodalPart> = [
+                    { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                    { type: 'image', value: imageFile },
+                  ];
+                  stream = sessionToUse.promptStreaming(flatParts, { signal });
+                } else {
+                  throw payloadErr;
+                }
+              }
+
               let accumulated = '';
               for await (const chunk of stream as unknown as AsyncIterable<string>) {
                 if (signal?.aborted) break;
@@ -348,14 +444,41 @@ class AIService {
               }
 
               console.warn('promptStreaming error, falling back to prompt():', streamErr);
-              const rawAnswer = await this.session.prompt(userMessage, { signal });
+              let rawAnswer: string;
+              try {
+                rawAnswer = await sessionToUse.prompt(promptPayload, { signal });
+              } catch {
+                if (imageFile) {
+                  const flatParts: Array<AIMultimodalPart> = [
+                    { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                    { type: 'image', value: imageFile },
+                  ];
+                  rawAnswer = await sessionToUse.prompt(flatParts, { signal });
+                } else {
+                  throw streamErr;
+                }
+              }
+
               const loopCheck = detectRepetitionLoop(rawAnswer);
               const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
               onChunk(answer);
               return answer;
             }
           } else {
-            const rawAnswer = await this.session.prompt(userMessage, { signal });
+            let rawAnswer: string;
+            try {
+              rawAnswer = await sessionToUse.prompt(promptPayload, { signal });
+            } catch {
+              if (imageFile) {
+                const flatParts: Array<AIMultimodalPart> = [
+                  { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                  { type: 'image', value: imageFile },
+                ];
+                rawAnswer = await sessionToUse.prompt(flatParts, { signal });
+              } else {
+                throw new Error('Prompt failed');
+              }
+            }
             const loopCheck = detectRepetitionLoop(rawAnswer);
             const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
             onChunk(answer);
@@ -377,6 +500,19 @@ class AIService {
             throw err;
           }
 
+          if (imageFile) {
+            console.warn('Multimodal vision prompt error:', err);
+            const errorMsg =
+              '⚠️ โมเดล Built-in AI บนเบราว์เซอร์นี้ยังไม่สามารถประมวลผลรูปภาพได้ในขณะนี้\n\n' +
+              'กรุณาตรวจสอบการตั้งค่าใน Chrome ดังนี้:\n' +
+              '1. เปิด `chrome://flags/#prompt-api-multimodal-input` (หรือ `#prompt-api-for-gemini-nano-multimodal-input`) → เลือก **Enabled**\n' +
+              '2. เปิด `chrome://flags/#prompt-api` → เลือก **Enabled**\n' +
+              '3. เปิด `chrome://components` → กด **Check for update** ที่ Optimization Guide On Device Models\n' +
+              '4. ปิดแล้วเปิด Chrome ใหม่เพื่อโหลดโมเดล Vision เข้าสู่ระบบครับ';
+            onChunk(errorMsg);
+            return errorMsg;
+          }
+
           console.warn('Prompt error, attempting recreation...', err);
           await this.initSession();
           if (this.session) {
@@ -387,31 +523,150 @@ class AIService {
             return answer;
           }
           throw err;
+        } finally {
+          if (isolatedMultimodalSession) {
+            try {
+              isolatedMultimodalSession.destroy();
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     }
 
     // Mock response fallback for development / browsers without flag enabled
-    return await this.mockStreamResponse(userMessage, onChunk, signal);
+    return await this.mockStreamResponse(userMessage, onChunk, signal, imageFile);
   }
 
   private async mockStreamResponse(
     userMessage: string,
     onChunk: (accumulated: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    imageFile?: File | Blob | null
   ): Promise<string> {
     const hasCompressedContext = this.currentSystemPrompt.includes('[บริบทประวัติเดิมที่ถูกบีบอัด]:');
 
     let reply: string;
-    if (hasCompressedContext) {
+    if (imageFile) {
+      const fileName = imageFile instanceof File ? imageFile.name : 'image.png';
+      const fileSizeKb = (imageFile.size / 1024).toFixed(1);
+      const fileType = imageFile.type || 'image/png';
+      reply =
+        `⚠️ **ไม่สามารถประมวลผลรูปภาพด้วยโมเดล On-Device ได้ในขณะนี้**\n\n` +
+        `- **ไฟล์ที่แนบมา**: \`${fileName}\` (${fileSizeKb} KB, \`${fileType}\`)\n` +
+        `- **สาเหตุ**: เซสชันของโมเดล AI บน Chrome ในเครื่องยังไม่พร้อมทำงานจริง\n\n` +
+        `กรุณาตรวจสอบว่าสถานะ Built-in AI ที่แถบด้านบนขึ้นเป็นสีเขียว เพื่อให้โมเดล AI ในเครื่องเป็นผู้มองเห็นและวิเคราะห์รูปภาพจริงครับ`;
+    } else if (hasCompressedContext) {
       reply = `เข้าใจแล้วครับ! ผมจำบริบทเดิมจากการสนทนาก่อนหน้าที่ถูกบีบอัดไว้ได้เรียบร้อยแล้ว\n\nสำหรับข้อความล่าสุด: "${userMessage}"\nผมพร้อมตอบคำถามและสนทนาต่ออย่างต่อเนื่องครับ! 😊`;
     } else {
-      const mockReplies = [
-        `สวัสดีครับ! ได้รับข้อความ "${userMessage}" เรียบร้อยแล้วครับ ขอบคุณที่ทดสอบใช้งาน UI แชทบอทนี้! 😊`,
-        `นี่คือผลลัพธ์จำลองสำหรับการทดสอบหน้าเว็บ (Mock Mode) ของ Built-in AI Prompt API ครับ\n\nเมื่อเปิดใช้งานผ่าน Chrome ที่รองรับ ระบบจะประมวลผลผ่านโมเดล On-Device บนเครื่องของคุณโดยตรงอย่างรวดเร็วและปลอดภัย!`,
-        `ข้อความของคุณคือ: "${userMessage}"\n\nระบบแชทบอทนี้พร้อมใช้งานทั้ง:\n1. การตอบแบบ Real-time Streaming\n2. การปรับแต่ง System Prompt\n3. การจัดรูปแบบ **Markdown** อย่างสวยงาม\n4. รองรับทั้ง Desktop และ Mobile`,
-      ];
-      reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
+      const lower = userMessage.toLowerCase();
+      if (
+        lower.includes('custom hook') ||
+        lower.includes('hook') ||
+        lower.includes('online/offline') ||
+        lower.includes('online')
+      ) {
+        reply =
+          `นี่คือตัวอย่างการสร้าง Custom Hook ใน React สำหรับตรวจจับสถานะ Online/Offline (\`useOnlineStatus\`) พร้อมคำอธิบายและตัวอย่างการนำไปใช้งานครับ:\n\n` +
+          `### 1. โค้ด Custom Hook (\`useOnlineStatus.ts\`)\n\n` +
+          `\`\`\`tsx\n` +
+          `import { useState, useEffect } from 'react';\n\n` +
+          `/**\n` +
+          ` * Custom Hook สำหรับตรวจจับสถานะการเชื่อมต่อเครือข่ายของผู้ใช้\n` +
+          ` * @returns boolean - true หากออนไลน์, false หากออฟไลน์\n` +
+          ` */\n` +
+          `export function useOnlineStatus(): boolean {\n` +
+          `  const [isOnline, setIsOnline] = useState<boolean>(() => {\n` +
+          `    return typeof navigator !== 'undefined' ? navigator.onLine : true;\n` +
+          `  });\n\n` +
+          `  useEffect(() => {\n` +
+          `    const handleOnline = () => setIsOnline(true);\n` +
+          `    const handleOffline = () => setIsOnline(false);\n\n` +
+          `    window.addEventListener('online', handleOnline);\n` +
+          `    window.addEventListener('offline', handleOffline);\n\n` +
+          `    return () => {\n` +
+          `      window.removeEventListener('online', handleOnline);\n` +
+          `      window.removeEventListener('offline', handleOffline);\n` +
+          `    };\n` +
+          `  }, []);\n\n` +
+          `  return isOnline;\n` +
+          `}\n` +
+          `\`\`\`\n\n` +
+          `### 2. ตัวอย่างการนำไปใช้งานใน Component\n\n` +
+          `\`\`\`tsx\n` +
+          `import React from 'react';\n` +
+          `import { useOnlineStatus } from './useOnlineStatus';\n\n` +
+          `export const NetworkBadge: React.FC = () => {\n` +
+          `  const isOnline = useOnlineStatus();\n\n` +
+          `  return (\n` +
+          `    <div className={\`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold \${\n` +
+          `      isOnline\n` +
+          `        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'\n` +
+          `        : 'bg-rose-50 text-rose-700 border border-rose-200 animate-pulse'\n` +
+          `    }\`}>\n` +
+          `      <span className={\`h-2 w-2 rounded-full \${isOnline ? 'bg-emerald-500' : 'bg-rose-500'}\`} />\n` +
+          `      <span>{isOnline ? 'เชื่อมต่อออนไลน์ปกติ' : 'ขาดการเชื่อมต่อ (ออฟไลน์)'}</span>\n` +
+          `    </div>\n` +
+          `  );\n` +
+          `};\n` +
+          `\`\`\`\n\n` +
+          `---\n` +
+          `> 💡 *หมายเหตุ (โหมดจำลอง Mock Mode): ขณะนี้เบราว์เซอร์ทำงานในโหมดจำลอง หากเปิดใช้งาน Chrome Prompt API บนเครื่อง ระบบจะประมวลผลผ่านโมเดล On-Device AI (${this.detectModelType().modelName}) บนเครื่องจริงครับ*`;
+      } else if (
+        lower.includes('built-in ai') ||
+        lower.includes('prompt api') ||
+        lower.includes('cloud ai')
+      ) {
+        reply =
+          `### 🌐 Chrome Built-in AI (Prompt API) คืออะไร?\n\n` +
+          `**Chrome Built-in AI** คือความสามารถใหม่ของ Google Chrome ที่ผนวกรวมโมเดล AI (เช่น **Gemma / Gemini Nano**) เข้ามาไว้ในตัวเบราว์เซอร์ ทำให้นักพัฒนาสามารถเรียกใช้งานผ่าน JavaScript API ได้โดยตรงโดยไม่ต้องติดตั้งไลบรารีขนาดใหญ่หรือส่งข้อมูลขึ้น Cloud Server\n\n` +
+          `### 📊 เปรียบเทียบ Built-in AI vs Cloud AI\n\n` +
+          `| คุณสมบัติ | Built-in AI (On-Device) | Cloud AI (เช่น OpenAI, Gemini API) |\n` +
+          `| :--- | :--- | :--- |\n` +
+          `| **ความเป็นส่วนตัว (Privacy)** | 🔒 ข้อมูลประมวลผลในเครื่อง 100% ไม่ส่งออกนอกเครื่อง | 🌐 ต้องส่งข้อมูลผ่านเน็ตขึ้นเซิร์ฟเวอร์ภายนอก |\n` +
+          `| **ความเร็วและความหน่วง (Latency)** | ⚡ ไม่มีค่า Network Overhead (Zero Network Latency) | ⏳ ขึ้นอยู่กับความเร็วอินเทอร์เน็ตและคิวเซิร์ฟเวอร์ |\n` +
+          `| **การทำงานออฟไลน์ (Offline)** | 📶 ทำงานได้ 100% แม้ไม่มีการเชื่อมต่ออินเทอร์เน็ต | ❌ ไม่สามารถใช้งานได้หากเน็ตหลุด |\n` +
+          `| **ค่าใช้จ่าย (Cost)** | 🆓 ฟรี ไม่มีค่า Token Billing | 💰 คิดค่าบริการตามจำนวน Token ที่ประมวลผล |\n\n` +
+          `---\n` +
+          `> 💡 *หมายเหตุ (โหมดจำลอง Mock Mode)*`;
+      } else if (lower.includes('อีเมล') || lower.includes('ลางาน')) {
+        reply =
+          `นี่คือตัวอย่างร่างอีเมลขอลางานเพื่อทำธุระส่วนตัวแบบสุภาพและเป็นมืออาชีพครับ:\n\n` +
+          `**หัวข้ออีเมล:** [ขอลางานเพื่อทำธุระส่วนตัว] - [ชื่อ-นามสกุลของคุณ] ([ตำแหน่ง])\n\n` +
+          `เรียน [ชื่อหัวหน้างาน / ผู้จัดการ],\n\n` +
+          `กระผมนาย/ดิฉัน [ชื่อ-นามสกุล] ตำแหน่ง [ระบุตำแหน่ง] มีความประสงค์จะขอลางานเพื่อไปทำธุระส่วนตัวเป็นเวลา 1 วัน ในวันที่ [ระบุวันที่]\n\n` +
+          `ทั้งนี้ กระผม/ดิฉัน ได้จัดเตรียมและส่งมอบงานที่จำเป็นให้แก่ [ชื่อผู้รับผิดชอบงานแทน] เรียบร้อยแล้ว และจะกลับมาปฏิบัติงานตามปกติในวันที่ [ระบุวันรุ่งขึ้น] หากมีเรื่องเร่งด่วนสามารถติดต่อกระผม/ดิฉันได้ทางโทรศัพท์ [ระบุเบอร์โทร]\n\n` +
+          `จึงเรียนมาเพื่อโปรดพิจารณาอนุมัติ\n\n` +
+          `ขอแสดงความนับถือ,\n` +
+          `[ชื่อ-นามสกุลของคุณ]\n` +
+          `[เบอร์โทรติดต่อ]`;
+      } else if (
+        lower.includes('แปล') ||
+        lower.includes('business casual') ||
+        lower.includes('ภาษาอังกฤษ')
+      ) {
+        reply =
+          `นี่คือคำแปลภาษาอังกฤษในระดับ **Business Casual** ที่เป็นธรรมชาติและเป็นมืออาชีพครับ:\n\n` +
+          `> **"We're set to kick off this feature next week according to plan."**\n\n` +
+          `**ตัวเลือกสำนวนอื่นๆ:**\n` +
+          `- *ทางการปานกลาง:* "We will begin developing this feature next week as planned."\n` +
+          `- *กระชับและทันสมัย:* "We're on track to start work on this feature next week."`;
+      } else {
+        const mockReplies = [
+          `ได้รับข้อความ: "${userMessage}" เรียบร้อยแล้วครับ\n\n` +
+            `> ⚠️ **ระบบกำลังทำงานในโหมดจำลอง (Mock Mode)**\n` +
+            `> เนื่องจากเบราว์เซอร์ปัจจุบันยังไม่ได้เปิดใช้งาน Chrome Prompt API (Gemma / Gemini Nano)\n\n` +
+            `**หากต้องการใช้งานโมเดล AI จริงในเครื่อง กรุณาเปิดใช้งาน Flags ดังนี้:**\n` +
+            `1. เปิด \`chrome://flags/#prompt-api-for-gemini-nano\` → เลือก **Enabled**\n` +
+            `2. เปิด \`chrome://flags/#optimization-guide-on-device-model\` → เลือก **Enabled BypassPerfRequirement**\n` +
+            `3. ไปที่ \`chrome://components\` → ตรวจสอบการดาวน์โหลดที่ **Optimization Guide On Device Models**\n` +
+            `4. ปิดแล้วเปิด Chrome ใหม่อีกครั้งครับ!`,
+          `สำหรับคำถาม: "${userMessage}"\n\n` +
+            `ขณะนี้ระบบแชทบอททำงานใน **โหมดจำลอง (Mock Demo)** UI และฟังก์ชันทุกส่วน (Markdown, Code Block, Streaming, Image Upload) พร้อมทำงานอย่างสมบูรณ์แล้วครับ!`,
+        ];
+        reply = mockReplies[Math.floor(Math.random() * mockReplies.length)];
+      }
     }
 
     let current = '';

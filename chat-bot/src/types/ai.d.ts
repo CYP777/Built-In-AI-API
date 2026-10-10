@@ -15,10 +15,29 @@ export interface AILanguageModelCreateOptions {
   signal?: AbortSignal;
 }
 
+export type AIMultimodalPart =
+  | { type: 'text'; value: string }
+  | { type: 'image'; value: Blob | File | ImageBitmap | HTMLImageElement | HTMLCanvasElement };
+
+export interface AIMultimodalMessage {
+  role?: 'user' | 'assistant' | 'system';
+  content: Array<AIMultimodalPart>;
+}
+
+export type AIPromptInput = string | Array<AIMultimodalPart> | Array<AIMultimodalMessage>;
+
+export interface ImageAttachment {
+  url: string;
+  name: string;
+  size: number;
+  type: string;
+  file?: File;
+}
+
 export interface AILanguageModelSession {
-  prompt(input: string | unknown, options?: { signal?: AbortSignal }): Promise<string>;
+  prompt(input: AIPromptInput, options?: { signal?: AbortSignal }): Promise<string>;
   promptStreaming(
-    input: string | unknown,
+    input: AIPromptInput,
     options?: { signal?: AbortSignal }
   ): ReadableStream<string>;
   countPromptTokens?(input: string): Promise<number>;

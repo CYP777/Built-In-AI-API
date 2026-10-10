@@ -12,6 +12,7 @@ export interface PolicyModalProps {
   onAccept: () => void;
   onAppendToPrompt?: (shouldAppend: boolean) => void;
   isAppended?: boolean;
+  modelName?: string;
 }
 
 export const PolicyModal: React.FC<PolicyModalProps> = ({
@@ -20,6 +21,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
   onAccept,
   onAppendToPrompt,
   isAppended = true,
+  modelName,
 }) => {
   const [agreed, setAgreed] = useState<boolean>(true);
 
@@ -49,7 +51,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                 ข้อตกลงและนโยบายความปลอดภัย AI
               </h3>
               <p className="text-[11px] text-slate-500">
-                On-Device Gemini Nano • มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
+                On-Device {modelName || 'Gemma'} • มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
               </p>
             </div>
           </div>
@@ -71,7 +73,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
               <span>ยินดีต้อนรับสู่ระบบแชทบอท On-Device AI</span>
             </div>
             <p className="text-slate-600 leading-relaxed">
-              ระบบนี้ประมวลผลด้วยโมเดล Gemini Nano บนอุปกรณ์ของคุณโดยตรง เพื่อความถูกต้องและปลอดภัยสูงสุด
+              ระบบนี้ประมวลผลด้วยโมเดล {modelName || 'Gemma'} บนอุปกรณ์ของคุณโดยตรง เพื่อความถูกต้องและปลอดภัยสูงสุด
               โปรดศึกษานโยบายความปลอดภัยและข้อกำหนดหลัก 4 ประการด้านล่างก่อนเริ่มต้นการสนทนา
             </p>
           </div>
