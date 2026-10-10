@@ -853,7 +853,7 @@ const AIPromptPage: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen w-full flex-col bg-gradient-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
+    <div className="flex h-screen w-full flex-col bg-linear-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
       {/* Header */}
       <ChatHeader
         status={statusState.status}
@@ -905,7 +905,7 @@ const AIPromptPage: React.FC = () => {
           {messages.length === 0 ? (
             /* Welcome / Empty State */
             <div className="flex min-h-[58vh] flex-col items-center justify-center text-center px-4">
-              <div className="relative mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-xl shadow-emerald-500/20">
+              <div className="relative mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-xl shadow-emerald-500/20">
                 <Sparkles className="h-8 w-8" />
                 <span className="absolute -top-1 -right-1 flex h-4 w-4">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
