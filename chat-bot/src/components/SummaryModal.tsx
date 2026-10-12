@@ -182,7 +182,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                 ) : activeEngine === 'prompt-api' || (!activeEngine && engineState.status === 'fallback-prompt') ? (
                   <span className="flex items-center gap-1 rounded-md bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800">
                     <Cpu className="h-3 w-3" />
-                    {modelName || 'Gemma'}
+                    {modelName || 'Chrome Built-in AI'}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">

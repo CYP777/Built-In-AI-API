@@ -52,7 +52,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ตั้งค่าโมเดล AI (Model Settings)
               </h3>
               <p className="text-[11px] text-slate-500">
-                {activeModelName || 'Gemma (GPU)'} • ปรับแต่งพารามิเตอร์ของโมเดล
+                {activeModelName || 'Chrome Built-in AI (GPU)'} • ปรับแต่งพารามิเตอร์ของโมเดล
               </p>
             </div>
           </div>
@@ -130,13 +130,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span>วิธีเปิดใช้งาน Chrome Built-in AI (Prompt API)</span>
             </div>
             <ol className="list-decimal list-inside space-y-1 text-slate-500 pl-1 leading-relaxed">
-              <li>ใช้ <strong>Google Chrome</strong> (เวอร์ชัน 138 ขึ้นไป)</li>
+              <li>ใช้ <strong>Google Chrome</strong> (เวอร์ชัน 138 ขึ้นไป หรือ Chrome Canary/Dev)</li>
               <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#prompt-api</code> → เลือก <strong>Enabled</strong></li>
-              <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#prompt-api-for-gemini-nano-multimodal-input</code> → เลือก <strong>Enabled</strong> (สำหรับส่งรูปภาพ)</li>
-              <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#gemma4-for-built-in-ai</code> → เลือก <strong>Enabled</strong></li>
+              <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#prompt-api-multimodal-input</code> → เลือก <strong>Enabled</strong> (สำหรับส่งรูปภาพ)</li>
               <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#optimization-guide-debug-logs</code> → เลือก <strong>Enabled</strong></li>
               <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://flags/#enable-experimental-web-platform-features</code> → เลือก <strong>Enabled</strong></li>
-              <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://components</code> → กด <strong>Check for update</strong> ที่ Optimization Guide On DeviceModels Manifest</li>
+              <li>ไปที่ <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[11px]">chrome://components</code> → กด <strong>Check for update</strong> ที่ Optimization Guide On Device Model</li>
             </ol>
           </div>
         </div>
