@@ -44,6 +44,10 @@ export interface AILanguageModelSession {
   maxTokens?: number;
   tokensSoFar?: number;
   tokensLeft?: number;
+  contextWindow?: number;
+  contextUsage?: number;
+  inputQuota?: number;
+  inputUsage?: number;
   destroy(): void;
   clone(): Promise<AILanguageModelSession>;
 }

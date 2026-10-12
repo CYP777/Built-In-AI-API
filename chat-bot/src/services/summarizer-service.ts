@@ -226,7 +226,7 @@ class SummarizerService {
       }
     }
 
-    // 2. Prompt API (Gemini Nano) on-device fallback / primary for Thai text
+    // 2. Prompt API on-device fallback / primary for Thai text
     const promptSummary = await this.runPromptModelSummarize(text, {
       type,
       format,

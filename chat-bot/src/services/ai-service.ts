@@ -7,7 +7,7 @@ import type {
 } from '../types/ai';
 
 export type AIStatus = 'checking' | 'available' | 'downloading' | 'unavailable' | 'mock';
-export type OnDeviceModelType = 'gemini-nano' | 'gemma';
+export type OnDeviceModelType = 'built-in' | 'mock';
 
 export interface AIServiceState {
   status: AIStatus;
@@ -64,43 +64,18 @@ class AIService {
     maxTokens: number;
   } {
     const hasGpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-    const maxTokens = this.session?.maxTokens ?? 4096;
-
-    // 1. Inspect explicit session / capabilities metadata if exposed by browser
     const sessionAny = this.session as unknown as Record<string, unknown> | null;
-    const raw = String(sessionAny?.model || sessionAny?.modelName || '').toLowerCase();
-    if (raw.includes('gemma')) {
-      return {
-        modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
-        hasGpu,
-        maxTokens,
-      };
-    }
-    if (raw.includes('nano') || raw.includes('gemini')) {
-      return {
-        modelType: 'gemini-nano',
-        modelName: hasGpu ? 'Gemini Nano (GPU)' : 'Gemini Nano',
-        hasGpu,
-        maxTokens,
-      };
-    }
+    const maxTokens =
+      (sessionAny?.contextWindow as number) ??
+      (sessionAny?.inputQuota as number) ??
+      (this.session?.maxTokens as number) ??
+      9216;
 
-    // 2. Check context window:
-    // Gemini Nano on Chrome is strictly 4,096 tokens, while Gemma on-device has 8,192+
-    if (maxTokens > 4096) {
-      return {
-        modelType: 'gemma',
-        modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
-        hasGpu,
-        maxTokens,
-      };
-    }
+    const modelName = hasGpu ? 'Chrome Built-in AI (GPU)' : 'Chrome Built-in AI';
 
-    // Default to Gemma (standard on-device component in Chrome 138+)
     return {
-      modelType: 'gemma',
-      modelName: hasGpu ? 'Gemma (GPU)' : 'Gemma',
+      modelType: 'built-in',
+      modelName,
       hasGpu,
       maxTokens,
     };
@@ -292,6 +267,38 @@ class AIService {
         // Try 4: bare minimum
         if (!sessionCreated) {
           this.session = await this.factory.create();
+          if (this.session) {
+            sessionCreated = true;
+          }
+        }
+
+        if (this.session) {
+          const sessionAny = this.session as unknown as Record<string, unknown>;
+          const maxTokens =
+            (sessionAny.contextWindow as number) ??
+            (sessionAny.inputQuota as number) ??
+            this.session.maxTokens ??
+            9216;
+          const tokensSoFar =
+            (sessionAny.contextUsage as number) ??
+            (sessionAny.inputUsage as number) ??
+            this.session.tokensSoFar ??
+            0;
+          const tokensLeft =
+            this.session.tokensLeft ??
+            ((typeof maxTokens === 'number' && typeof tokensSoFar === 'number')
+              ? Math.max(0, maxTokens - tokensSoFar)
+              : undefined);
+
+          console.log('🚀 [Chrome Built-in AI] Session initialized:', {
+            isLiveSession: true,
+            contextWindow: sessionAny.contextWindow,
+            inputQuota: sessionAny.inputQuota,
+            maxTokens: maxTokens,
+            tokensSoFar: tokensSoFar,
+            tokensLeft: tokensLeft,
+            rawSession: this.session,
+          });
         }
       } catch (e) {
         console.warn('Could not initialize Built-in AI session:', e);
@@ -357,21 +364,39 @@ class AIService {
       // If an image is attached, create/use multimodal session
       let sessionToUse = this.session;
       let isolatedMultimodalSession: AILanguageModelSession | null = null;
+      let imageBitmap: ImageBitmap | null = null;
 
       if (imageFile) {
+        if (typeof createImageBitmap === 'function') {
+          try {
+            imageBitmap = await createImageBitmap(imageFile);
+          } catch (bitmapErr) {
+            console.warn('createImageBitmap failed, falling back to raw File/Blob:', bitmapErr);
+          }
+        }
+
         try {
           isolatedMultimodalSession = await this.factory.create({
             systemPrompt: this.currentSystemPrompt,
             expectedInputs: [{ type: 'text' }, { type: 'image' }],
           });
           sessionToUse = isolatedMultimodalSession;
-        } catch (e) {
-          console.warn('Dedicated multimodal session creation fallback:', e);
+        } catch {
+          try {
+            isolatedMultimodalSession = await this.factory.create({
+              systemPrompt: this.currentSystemPrompt,
+              expectedInputs: [{ type: 'image' }],
+            });
+            sessionToUse = isolatedMultimodalSession;
+          } catch (e) {
+            console.warn('Dedicated multimodal session creation fallback:', e);
+          }
         }
       }
 
       if (sessionToUse) {
         try {
+          const imagePayloadValue = (imageBitmap || imageFile)!;
           let promptPayload: AIPromptInput = userMessage;
 
           if (imageFile) {
@@ -380,7 +405,7 @@ class AIService {
                 role: 'user',
                 content: [
                   { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
-                  { type: 'image', value: imageFile },
+                  { type: 'image', value: imagePayloadValue },
                 ],
               },
             ];
@@ -395,7 +420,7 @@ class AIService {
                 if (imageFile) {
                   const flatParts: Array<AIMultimodalPart> = [
                     { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
-                    { type: 'image', value: imageFile },
+                    { type: 'image', value: imagePayloadValue },
                   ];
                   stream = sessionToUse.promptStreaming(flatParts, { signal });
                 } else {
@@ -451,7 +476,7 @@ class AIService {
                 if (imageFile) {
                   const flatParts: Array<AIMultimodalPart> = [
                     { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
-                    { type: 'image', value: imageFile },
+                    { type: 'image', value: imagePayloadValue },
                   ];
                   rawAnswer = await sessionToUse.prompt(flatParts, { signal });
                 } else {
@@ -524,6 +549,13 @@ class AIService {
           }
           throw err;
         } finally {
+          if (imageBitmap) {
+            try {
+              imageBitmap.close();
+            } catch {
+              // ignore
+            }
+          }
           if (isolatedMultimodalSession) {
             try {
               isolatedMultimodalSession.destroy();
@@ -620,7 +652,7 @@ class AIService {
       ) {
         reply =
           `### 🌐 Chrome Built-in AI (Prompt API) คืออะไร?\n\n` +
-          `**Chrome Built-in AI** คือความสามารถใหม่ของ Google Chrome ที่ผนวกรวมโมเดล AI (เช่น **Gemma / Gemini Nano**) เข้ามาไว้ในตัวเบราว์เซอร์ ทำให้นักพัฒนาสามารถเรียกใช้งานผ่าน JavaScript API ได้โดยตรงโดยไม่ต้องติดตั้งไลบรารีขนาดใหญ่หรือส่งข้อมูลขึ้น Cloud Server\n\n` +
+          `**Chrome Built-in AI** คือความสามารถใหม่ของ Google Chrome ที่ผนวกรวมโมเดล AI (On-Device Model) เข้ามาไว้ในตัวเบราว์เซอร์ ทำให้นักพัฒนาสามารถเรียกใช้งานผ่าน JavaScript API ได้โดยตรงโดยไม่ต้องติดตั้งไลบรารีขนาดใหญ่หรือส่งข้อมูลขึ้น Cloud Server\n\n` +
           `### 📊 เปรียบเทียบ Built-in AI vs Cloud AI\n\n` +
           `| คุณสมบัติ | Built-in AI (On-Device) | Cloud AI (เช่น OpenAI, Gemini API) |\n` +
           `| :--- | :--- | :--- |\n` +
@@ -656,11 +688,11 @@ class AIService {
         const mockReplies = [
           `ได้รับข้อความ: "${userMessage}" เรียบร้อยแล้วครับ\n\n` +
             `> ⚠️ **ระบบกำลังทำงานในโหมดจำลอง (Mock Mode)**\n` +
-            `> เนื่องจากเบราว์เซอร์ปัจจุบันยังไม่ได้เปิดใช้งาน Chrome Prompt API (Gemma / Gemini Nano)\n\n` +
+            `> เนื่องจากเบราว์เซอร์ปัจจุบันยังไม่ได้เปิดใช้งาน Chrome Prompt API\n\n` +
             `**หากต้องการใช้งานโมเดล AI จริงในเครื่อง กรุณาเปิดใช้งาน Flags ดังนี้:**\n` +
-            `1. เปิด \`chrome://flags/#prompt-api-for-gemini-nano\` → เลือก **Enabled**\n` +
+            `1. เปิด \`chrome://flags/#prompt-api\` → เลือก **Enabled**\n` +
             `2. เปิด \`chrome://flags/#optimization-guide-on-device-model\` → เลือก **Enabled BypassPerfRequirement**\n` +
-            `3. ไปที่ \`chrome://components\` → ตรวจสอบการดาวน์โหลดที่ **Optimization Guide On Device Models**\n` +
+            `3. ไปที่ \`chrome://components\` → ตรวจสอบการดาวน์โหลดที่ **Optimization Guide On Device Model**\n` +
             `4. ปิดแล้วเปิด Chrome ใหม่อีกครั้งครับ!`,
           `สำหรับคำถาม: "${userMessage}"\n\n` +
             `ขณะนี้ระบบแชทบอททำงานใน **โหมดจำลอง (Mock Demo)** UI และฟังก์ชันทุกส่วน (Markdown, Code Block, Streaming, Image Upload) พร้อมทำงานอย่างสมบูรณ์แล้วครับ!`,
@@ -714,24 +746,37 @@ class AIService {
     return this.estimateTokens(text);
   }
 
-  public getContextTokenUsage(accumulatedChars?: number): {
+  public getContextTokenUsage(liveTokens?: number): {
     maxTokens: number;
     tokensSoFar: number;
     tokensLeft: number;
   } {
-    const maxTokens = this.session?.maxTokens ?? 4096;
-    let tokensSoFar = 0;
+    const sessionAny = this.session as unknown as Record<string, unknown> | null;
+    const maxTokens =
+      (sessionAny?.contextWindow as number) ??
+      (sessionAny?.inputQuota as number) ??
+      (this.session?.maxTokens as number) ??
+      9216;
 
-    if (this.session && typeof this.session.tokensSoFar === 'number') {
-      tokensSoFar = this.session.tokensSoFar;
-    } else if (accumulatedChars !== undefined && accumulatedChars > 0) {
-      tokensSoFar = Math.ceil(accumulatedChars / 3.0);
-    }
+    const chromeUsage =
+      typeof sessionAny?.contextUsage === 'number' && sessionAny.contextUsage > 0
+        ? (sessionAny.contextUsage as number)
+        : typeof sessionAny?.inputUsage === 'number' && sessionAny.inputUsage > 0
+        ? (sessionAny.inputUsage as number)
+        : typeof this.session?.tokensSoFar === 'number' && this.session.tokensSoFar > 0
+        ? this.session.tokensSoFar
+        : 0;
 
-    const tokensLeft =
-      this.session && typeof this.session.tokensLeft === 'number'
-        ? this.session.tokensLeft
-        : Math.max(0, maxTokens - tokensSoFar);
+    const liveEstimated =
+      liveTokens !== undefined && liveTokens > 0
+        ? Math.round(liveTokens)
+        : 0;
+
+    // Use live character estimation so tokens tick in real-time as text streams,
+    // while never going below what Chrome officially reported.
+    const tokensSoFar = Math.max(chromeUsage, liveEstimated);
+    const tokensLeft = Math.max(0, maxTokens - tokensSoFar);
+
     return {
       maxTokens,
       tokensSoFar,
@@ -745,7 +790,8 @@ export function estimateTokens(text: string): number {
   const thaiMatch = text.match(/[\u0E00-\u0E7F]/g);
   const thaiCount = thaiMatch ? thaiMatch.length : 0;
   const nonThaiCount = text.length - thaiCount;
-  const estimated = Math.ceil(thaiCount / 2.8 + nonThaiCount / 4);
+  // On-Device tokenizer estimate: Thai text ~2.8 chars/token, Non-Thai (English/code/symbols) ~4.2 chars/token
+  const estimated = Math.ceil(thaiCount / 2.8 + nonThaiCount / 4.2);
   return Math.max(1, estimated);
 }
 
@@ -779,3 +825,7 @@ export function detectRepetitionLoop(text: string): { hasLoop: boolean; cleanedT
 }
 
 export const aiService = new AIService();
+
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).__aiService = aiService;
+}

@@ -37,7 +37,7 @@ const POLICY_MARKER = '[ข้อกำหนดนโยบายความ�
 const POLICY_CLAUSE =
   '\n\n[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]: ต้องตอบโดยยึดหลักข้อเท็จจริงและความเป็นกลาง ตรวจสอบความถูกต้องอย่างรอบคอบ ปฏิเสธข้อมูลที่ผิดกฎหมายหรือสร้างความเกลียดชัง และไม่แต่งเติมข้อมูลเท็จอย่างเด็ดขาด';
 const getDefaultBasePrompt = (modelName?: string): string => {
-  const name = modelName || 'Gemma';
+  const name = modelName || 'Chrome Built-in AI';
   return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
 };
 const POLICY_ACCEPTED_KEY = 'ai_safety_policy_accepted';
@@ -66,6 +66,8 @@ const AIPromptPage: React.FC = () => {
   const userScrolledUpRef = useRef<boolean>(false);
   const draftInputRef = useRef<string>('');
   const speechBaseTextRef = useRef<string>('');
+  const messagesRef = useRef<Message[]>(messages);
+  messagesRef.current = messages;
 
   // Helper to read File into persistent Data URL and set selectedImage
   const processImageFile = useCallback((file: File, fallbackName?: string) => {
@@ -127,7 +129,7 @@ const AIPromptPage: React.FC = () => {
   // Handle file select (Image attachment)
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    if (file) {
       processImageFile(file);
     }
     e.target.value = '';
@@ -399,11 +401,26 @@ const AIPromptPage: React.FC = () => {
       }, 0);
   }, [messages]);
 
-  const tokenUsage = useMemo(() => {
-    return aiService.getContextTokenUsage(conversationChars + systemPrompt.length);
-  }, [conversationChars, systemPrompt]);
+  const conversationTokens = useMemo(() => {
+    return messages
+      .filter((m) => !m.isCompacted && !m.isCompressedContext)
+      .reduce((acc, m) => {
+        const textTokens = m.text ? estimateTokens(m.text) : 0;
+        const imgTokens = m.imageAttachment ? 300 : 0;
+        return acc + textTokens + imgTokens;
+      }, 0);
+  }, [messages]);
 
-  const maxTokens = tokenUsage.maxTokens || 4096;
+  const tokenUsage = useMemo(() => {
+    const draftTokens = inputMessage.trim() ? estimateTokens(inputMessage.trim()) : 0;
+    const draftImgTokens = selectedImage ? 300 : 0;
+    const systemTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
+    return aiService.getContextTokenUsage(
+      conversationTokens + systemTokens + draftTokens + draftImgTokens
+    );
+  }, [conversationTokens, systemPrompt, inputMessage, selectedImage]);
+
+  const maxTokens = tokenUsage.maxTokens || 9216;
   const tokensSoFar = Math.min(tokenUsage.tokensSoFar, maxTokens);
   const tokensLeft = Math.max(0, maxTokens - tokensSoFar);
   const contextPercentage = Math.min(100, Math.round((tokensSoFar / maxTokens) * 1000) / 10);
@@ -458,7 +475,7 @@ const AIPromptPage: React.FC = () => {
   const handleCompressChatContext = useCallback(async (targetMessages?: Message[]) => {
     const rawMessages =
       targetMessages ??
-      messages.filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim());
+      (messagesRef.current || messages).filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim());
     if (rawMessages.length === 0 || isCompressingContext) return;
 
     setIsCompressingContext(true);
@@ -561,15 +578,15 @@ const AIPromptPage: React.FC = () => {
 
     const effectiveUserPrompt = promptText || (currentImage ? 'ช่วยวิเคราะห์รูปภาพนี้' : '');
 
-    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 500 หรือใช้ไป >= 78%) และมีประวัติเดิม ให้บีบอัดอัตโนมัติก่อนส่ง
+    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 800 หรือใช้ไป >= 88%) และมีประวัติเดิม ให้บีบอัดอัตโนมัติก่อนส่ง
     const activeRawMessages = messages.filter(
       (m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()
     );
-    const estPromptTokens = estimateTokens(effectiveUserPrompt) + 300;
+    const estPromptTokens = estimateTokens(effectiveUserPrompt) + 200;
     const isTokensLow =
-      tokensLeft <= 500 ||
-      tokensSoFar + estPromptTokens >= maxTokens * 0.78 ||
-      contextPercentage >= 78;
+      tokensLeft <= 800 ||
+      tokensSoFar + estPromptTokens >= maxTokens * 0.88 ||
+      contextPercentage >= 88;
 
     if (isTokensLow && activeRawMessages.length >= 2) {
       await handleCompressChatContext(activeRawMessages);
@@ -639,26 +656,40 @@ const AIPromptPage: React.FC = () => {
         currentImage?.file || null
       );
 
-      // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อยมาก (tokensLeft <= 150) และมีประวัติเดิม ให้บีบอัดเพื่อเตรียมพร้อมรอบต่อไป
-      const postTokensUsage = aiService.getContextTokenUsage();
-      const priorToCompact = messages.filter(
+      // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อย (tokensLeft <= 800 หรือ tokensSoFar >= maxTokens * 0.88) และมีประวัติเดิม ให้บีบอัดอัตโนมัติเพื่อเตรียมพร้อมรอบต่อไป
+      const latestMessages = messagesRef.current;
+      const postTotalTokens =
+        latestMessages
+          .filter((m) => !m.isCompacted && !m.isCompressedContext)
+          .reduce((acc, m) => acc + (m.text ? estimateTokens(m.text) : 0), 0) +
+        (systemPrompt ? estimateTokens(systemPrompt) : 0);
+
+      const postTokensUsage = aiService.getContextTokenUsage(postTotalTokens);
+      const priorToCompact = latestMessages.filter(
         (m) =>
-          m.id !== actualUserId &&
-          m.id !== actualAiId &&
           !m.isCompressedContext &&
           !m.isCompacted &&
           m.text.trim()
       );
 
       if (
-        (postTokensUsage.tokensLeft <= 150 || postTokensUsage.tokensSoFar >= maxTokens * 0.92) &&
-        priorToCompact.length >= 1 &&
+        (postTokensUsage.tokensLeft <= 800 || postTokensUsage.tokensSoFar >= maxTokens * 0.88) &&
+        priorToCompact.length >= 2 &&
         !controller.signal.aborted
       ) {
         await handleCompressChatContext(priorToCompact);
       }
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
+
+      const latestMessages = messagesRef.current;
+      const errTotalTokens =
+        latestMessages
+          .filter((m) => !m.isCompacted && !m.isCompressedContext)
+          .reduce((acc, m) => acc + (m.text ? estimateTokens(m.text) : 0), 0) +
+        (systemPrompt ? estimateTokens(systemPrompt) : 0);
+
+      const errTokensUsage = aiService.getContextTokenUsage(errTotalTokens);
 
       const errMessage = String((err as Error)?.message || '').toLowerCase();
       const errName = String((err as Error)?.name || '');
@@ -671,19 +702,17 @@ const AIPromptPage: React.FC = () => {
         errMessage.includes('limit') ||
         errMessage.includes('exhaust') ||
         errMessage.includes('max') ||
-        aiService.getContextTokenUsage().tokensLeft <= 300;
+        errTokensUsage.tokensLeft <= 800;
 
-      const priorToCompact = messages.filter(
+      const priorToCompact = latestMessages.filter(
         (m) =>
-          m.id !== actualUserId &&
-          m.id !== actualAiId &&
           !m.isCompressedContext &&
           !m.isCompacted &&
           m.text.trim()
       );
 
       // หากหยุดเพราะ Token เต็ม: บีบอัดประวัติเดิม และตอบให้ใหม่ทันที!
-      if (isTokenExhausted && priorToCompact.length >= 1) {
+      if (isTokenExhausted && priorToCompact.length >= 2) {
         try {
           // 1. บีบอัดประวัติเดิม และแทรกเส้นแบ่ง ──────────────── Conversation compacted ────────────────
           await handleCompressChatContext(priorToCompact);
@@ -733,7 +762,13 @@ const AIPromptPage: React.FC = () => {
     } finally {
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === actualAiId ? { ...msg, isStreaming: false } : msg
+          msg.id === actualAiId
+            ? {
+                ...msg,
+                text: msg.text || (controller.signal.aborted ? '⏹️ หยุดการสร้างข้อความแล้ว' : msg.text),
+                isStreaming: false,
+              }
+            : msg
         )
       );
       setIsGenerating(false);
@@ -763,6 +798,9 @@ const AIPromptPage: React.FC = () => {
 
   // Reset Session on settings save
   const handleSaveAndResetSession = async () => {
+    handleStop();
+    setMessages([]);
+    setSelectedImage(null);
     aiService.resetSession();
     await aiService.initSession({
       systemPrompt,
@@ -774,6 +812,7 @@ const AIPromptPage: React.FC = () => {
   // Textarea input auto-resize and keyboard shortcuts (Enter to send, ArrowUp/ArrowDown for history)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return;
       e.preventDefault();
       handleSend();
       return;
@@ -984,9 +1023,9 @@ const AIPromptPage: React.FC = () => {
               </span>
               <span
                 className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                  contextPercentage >= 85
+                  contextPercentage >= 88
                     ? 'bg-rose-100 text-rose-700'
-                    : contextPercentage >= 60
+                    : contextPercentage >= 70
                     ? 'bg-amber-100 text-amber-700'
                     : 'bg-emerald-100 text-emerald-700'
                 }`}
@@ -1010,9 +1049,9 @@ const AIPromptPage: React.FC = () => {
               <div className="h-1.5 w-16 sm:w-24 rounded-full bg-slate-200 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 ${
-                    contextPercentage >= 85
+                    contextPercentage >= 88
                       ? 'bg-red-600'
-                      : contextPercentage >= 60
+                      : contextPercentage >= 70
                       ? 'bg-amber-500'
                       : 'bg-emerald-500'
                   }`}

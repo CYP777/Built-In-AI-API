@@ -7,7 +7,7 @@ interface ChatHeaderProps {
   statusMessage: string;
   isMock?: boolean;
   modelName?: string;
-  modelType?: 'gemini-nano' | 'gemma';
+  modelType?: string;
   onClearChat: () => void;
   onOpenSettings: () => void;
   onRefreshStatus: () => void;
@@ -25,7 +25,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   status,
   statusMessage,
   modelName,
-  modelType,
   onClearChat,
   onOpenSettings,
   onRefreshStatus,
@@ -50,11 +49,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const getStatusBadge = () => {
     switch (status) {
       case 'available': {
-        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma (GPU)' : 'Gemini Nano (GPU)');
-        const tooltip =
-          modelType === 'gemma'
-            ? 'โมเดล On-Device บนเครื่อง: Gemma (รันผ่าน GPU)'
-            : 'โมเดล On-Device บนเครื่อง: Gemini Nano (รันผ่าน GPU nano_v3_gpu)';
+        const displayLabel = modelName || 'Chrome Built-in AI';
+        const tooltip = 'โมเดล On-Device บนเครื่อง: ประมวลผลในเครื่องของคุณโดยตรง (Prompt API)';
 
         return (
           <div
@@ -77,7 +73,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           </div>
         );
       case 'checking': {
-        const displayLabel = modelName || (modelType === 'gemma' ? 'Gemma (GPU)' : 'Gemini Nano (GPU)');
+        const displayLabel = modelName || 'Chrome Built-in AI';
         return (
           <div className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
             <span className="relative flex h-2 w-2">
@@ -119,16 +115,14 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             </span>
           </div>
           <p className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
-            {modelType === 'gemma'
-              ? 'แชทบอทประมวลผลด้วยโมเดล Gemma ภายในเครื่อง (GPU)'
-              : 'แชทบอทประมวลผลด้วยโมเดล Gemini Nano ภายในเครื่อง (GPU)'}
+            แชทบอทประมวลผลด้วยโมเดล On-Device ภายในเครื่อง (Prompt API)
           </p>
         </div>
       </div>
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2 sm:gap-2.5">
-        {/* Gemini Nano Status Badge & Re-check Status button */}
+        {/* Built-in AI Status Badge & Re-check Status button */}
         <div className="flex items-center gap-1">
           <div className="hidden sm:block">
             {getStatusBadge()}
