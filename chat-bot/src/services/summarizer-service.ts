@@ -253,26 +253,47 @@ class SummarizerService {
     if (!this.factory) return '';
     let session: AISummarizerSession | null = null;
 
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => {
+      timeoutController.abort('runNativeSummarize timeout');
+    }, 6000);
+
+    const onExternalAbort = () => timeoutController.abort();
+    if (options.signal) {
+      if (options.signal.aborted) {
+        clearTimeout(timeoutTimer);
+        return '';
+      }
+      options.signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
     try {
-      session = await this.factory.create({
+      const sessionPromise = this.factory.create({
         type: options.type,
         format: options.format,
         length: options.length,
         sharedContext: options.sharedContext,
-        signal: options.signal,
+        signal: timeoutController.signal,
       });
 
-      if (!session) return '';
+      session = await Promise.race([
+        sessionPromise,
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('native summarizer create timeout')), 3500)
+        ),
+      ]);
+
+      if (!session || timeoutController.signal.aborted) return '';
 
       if (options.onChunk && typeof session.summarizeStreaming === 'function') {
         try {
           const stream = session.summarizeStreaming(text, {
             context: options.sharedContext,
-            signal: options.signal,
+            signal: timeoutController.signal,
           });
           let accumulated = '';
           for await (const chunk of stream as unknown as AsyncIterable<string>) {
-            if (options.signal?.aborted) break;
+            if (timeoutController.signal.aborted) break;
             if (typeof chunk === 'string') {
               if (chunk.startsWith(accumulated)) {
                 accumulated = chunk; // Cumulative chunk
@@ -282,21 +303,38 @@ class SummarizerService {
             }
             options.onChunk(accumulated);
           }
-          return accumulated;
+          if (accumulated.trim().length > 0) {
+            return accumulated;
+          }
         } catch (streamErr) {
           console.warn('summarizeStreaming error, falling back to summarize():', streamErr);
         }
       }
 
-      const result = await session.summarize(text, {
+      const summarizePromise = session.summarize(text, {
         context: options.sharedContext,
-        signal: options.signal,
+        signal: timeoutController.signal,
       });
+
+      const result = await Promise.race([
+        summarizePromise,
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('native summarize timeout')), 4500)
+        ),
+      ]);
+
       if (options.onChunk) {
         options.onChunk(result);
       }
       return result;
+    } catch (nativeErr) {
+      console.warn('runNativeSummarize failed or timed out:', nativeErr);
+      return '';
     } finally {
+      clearTimeout(timeoutTimer);
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onExternalAbort);
+      }
       if (session) {
         try {
           session.destroy();
@@ -344,22 +382,45 @@ ${text}
 
 สรุปเนื้อหา:`;
 
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => {
+      timeoutController.abort('runPromptModelSummarize timeout');
+    }, 7500);
+
+    const onExternalAbort = () => timeoutController.abort();
+    if (options.signal) {
+      if (options.signal.aborted) {
+        clearTimeout(timeoutTimer);
+        return '';
+      }
+      options.signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
     let session: AILanguageModelSession | null = null;
     try {
-      session = await aiService.createIsolatedSession({
+      const sessionPromise = aiService.createIsolatedSession({
         systemPrompt: summarizerSystemPrompt,
         temperature: 0.3,
         topK: 3,
       });
 
-      if (!session) return '';
+      session = await Promise.race([
+        sessionPromise,
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error('createIsolatedSession timeout')), 3500)
+        ),
+      ]);
+
+      if (!session || timeoutController.signal.aborted) return '';
 
       let accumulated = '';
       if (options.onChunk && typeof session.promptStreaming === 'function') {
         try {
-          const stream = session.promptStreaming(summarizerUserPrompt, { signal: options.signal });
+          const stream = session.promptStreaming(summarizerUserPrompt, {
+            signal: timeoutController.signal,
+          });
           for await (const chunk of stream as unknown as AsyncIterable<string>) {
-            if (options.signal?.aborted) break;
+            if (timeoutController.signal.aborted) break;
             if (typeof chunk === 'string') {
               if (chunk.startsWith(accumulated)) {
                 accumulated = chunk; // Cumulative chunk
@@ -385,7 +446,19 @@ ${text}
         }
       }
 
-      const rawAnswer = await session.prompt(summarizerUserPrompt, { signal: options.signal });
+      if (timeoutController.signal.aborted) return '';
+
+      const promptPromise = session.prompt(summarizerUserPrompt, {
+        signal: timeoutController.signal,
+      });
+
+      const rawAnswer = await Promise.race([
+        promptPromise,
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('session.prompt timeout')), 5000)
+        ),
+      ]);
+
       const loopCheck = detectRepetitionLoop(rawAnswer);
       accumulated = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
       if (options.onChunk) {
@@ -393,9 +466,13 @@ ${text}
       }
       return accumulated;
     } catch (err) {
-      console.warn('runPromptModelSummarize failed:', err);
+      console.warn('runPromptModelSummarize failed or timed out:', err);
       return '';
     } finally {
+      clearTimeout(timeoutTimer);
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onExternalAbort);
+      }
       if (session) {
         try {
           session.destroy();
@@ -442,20 +519,58 @@ ${text}
 - ห้ามใส่หัวข้อทางเทคนิคภาษาอังกฤษ เช่น "Context Compression Engine", "Main Topic", "Key Takeaways"
 - เขียนเป็นความเรียงหรือสรุปเป็นข้อๆ อย่างเป็นธรรมชาติ`;
 
-    const rawSummary = await this.summarize(rawTranscript, {
-      type: 'tl;dr',
-      format: 'plain-text',
-      length: 'medium',
-      sharedContext: compressionInstruction,
-      signal: options?.signal,
-    });
+    let rawSummary: string;
+    const safeController = new AbortController();
+    const safeTimer = setTimeout(() => {
+      safeController.abort();
+    }, 9000);
+
+    if (options?.signal) {
+      options.signal.addEventListener('abort', () => safeController.abort(), { once: true });
+    }
+
+    try {
+      rawSummary = await this.summarize(rawTranscript, {
+        type: 'tl;dr',
+        format: 'plain-text',
+        length: 'medium',
+        sharedContext: compressionInstruction,
+        signal: safeController.signal,
+      });
+    } catch (summarizeErr) {
+      console.warn('summarize in compressChatContext timed out or errored:', summarizeErr);
+      rawSummary = await this.mockSummarize(rawTranscript, { type: 'tl;dr' });
+    } finally {
+      clearTimeout(safeTimer);
+    }
 
     const cleaned = cleanCompressedSummary(rawSummary);
-    const compressedSummary =
+    const newSummaryPortion =
       cleaned ||
       'สรุปประวัติเดิม: มีการสนทนาก่อนหน้าระหว่างผู้ใช้กับ AI เกี่ยวกับหัวข้อที่ได้กล่าวถึงข้างต้น';
 
-    const contextHeader = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' + compressedSummary + '\n---';
+    // Check for previous compressed context in systemPrompt and preserve it
+    const marker = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n';
+    let existingCompressed = '';
+    if (currentSystemPrompt.includes(marker)) {
+      const parts = currentSystemPrompt.split(marker);
+      if (parts[1]) {
+        const memoryOnly = parts[1].split('\n\n[คำสั่งสำคัญสำหรับ AI]:')[0];
+        existingCompressed = memoryOnly.split('\n---')[0].trim();
+      }
+    }
+
+    const compressedSummary = existingCompressed
+      ? `${existingCompressed}\n\n[สรุปส่วนเพิ่มเติม]:\n${newSummaryPortion}`
+      : newSummaryPortion;
+
+    const contextHeader =
+      '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' +
+      compressedSummary +
+      '\n\n[คำสั่งสำคัญสำหรับ AI]:\n' +
+      '1. นี่คือประวัติการสนทนาก่อนหน้านี้ที่คุณและผู้ใช้ได้พูดคุยกันไว้ คุณต้องจดจำหัวข้อและสาระสำคัญทั้งหมดในส่วนนี้เสมอ\n' +
+      '2. หากผู้ใช้ถามว่า "จำได้ไหม", "เมื่อกี้คุยอะไรกัน", หรือถามถึงเรื่องเดิม ให้ตอบจากข้อมูลในส่วนนี้อย่างเป็นธรรมชาติและถูกต้อง\n' +
+      '3. ห้ามตอบว่า "จำไม่ได้" หรือ "ไม่มีประวัติการสนทนา" โดยเด็ดขาด เพราะคุณมีบันทึกความจำอยู่ข้างต้นนี้แล้ว\n---';
     const cleanBasePrompt = currentSystemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
     const newSystemPrompt = cleanBasePrompt + contextHeader;
 

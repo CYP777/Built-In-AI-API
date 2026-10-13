@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, Layers, ChevronDown, X, Download, ZoomIn } from 'lucide-react';
+import { Copy, Check, Layers, ChevronDown, X, Download, ZoomIn, Sparkles, ExternalLink } from 'lucide-react';
 import { cleanCompressedSummary } from '../services/summarizer-service';
 import { stripMarkdown } from '../utils/markdown';
 import type { ImageAttachment } from '../types/ai';
@@ -272,6 +272,37 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           </div>
         )}
 
+        {/* Thinking / Typing state before first token arrives */}
+        {!isUser && !message.text && message.isStreaming && (
+          <div className="flex items-center gap-2.5 py-1 text-slate-600 select-none animate-in fade-in duration-200">
+            <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200/60 shadow-2xs shrink-0">
+              <Sparkles className="h-3.5 w-3.5 animate-pulse text-emerald-600" />
+            </div>
+            <span className="text-xs font-medium text-slate-500">AI กำลังคิด...</span>
+            <div className="flex items-center gap-1.5 ml-0.5">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                style={{ animationDelay: '0ms' }}
+              />
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                style={{ animationDelay: '150ms' }}
+              />
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                style={{ animationDelay: '300ms' }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Fallback when AI response is empty and finished */}
+        {!isUser && !message.text && !message.isStreaming && (
+          <div className="py-1 text-xs text-slate-400 italic">
+            (ไม่มีข้อความตอบกลับ)
+          </div>
+        )}
+
         {/* Message Text with Markdown */}
         {message.text && (
           <div className="space-y-1 min-w-0 max-w-full">
@@ -385,18 +416,32 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                       {children}
                     </blockquote>
                   ),
-                  a: ({ href, children }) => (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`underline underline-offset-2 break-all ${
-                        isUser ? 'text-white font-medium' : 'text-emerald-600 hover:text-emerald-700'
-                      }`}
-                    >
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children }) => {
+                    const cleanHref = href?.trim() || '';
+                    // เติม https:// อัตโนมัติหาก AI ลืมใส่ protocol เพื่อไม่ให้เปิดเป็น relative path บน localhost
+                    const normalizedHref =
+                      cleanHref &&
+                      !/^https?:\/\//i.test(cleanHref) &&
+                      !cleanHref.startsWith('mailto:') &&
+                      !cleanHref.startsWith('/') &&
+                      !cleanHref.startsWith('#')
+                        ? `https://${cleanHref}`
+                        : cleanHref;
+
+                    return (
+                      <a
+                        href={normalizedHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`inline-flex items-baseline gap-1 underline underline-offset-2 break-all ${
+                          isUser ? 'text-white font-medium' : 'text-emerald-600 hover:text-emerald-700'
+                        }`}
+                      >
+                        <span>{children}</span>
+                        <ExternalLink className="inline-block h-3 w-3 shrink-0 opacity-70 translate-y-0.5" />
+                      </a>
+                    );
+                  },
                 }}
               >
                 {message.text}
@@ -408,34 +453,36 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           </div>
         )}
 
-        {/* Message Footer: Timestamp and Copy */}
-        <div
-          className={`mt-2 flex items-center justify-between gap-3 text-[11px] opacity-70 ${
-            isUser ? 'text-emerald-100' : 'text-slate-400'
-          }`}
-        >
-          <span>{message.timestamp}</span>
+        {/* Message Footer: Timestamp and Copy (shown when text exists or generation finished) */}
+        {(message.text || !message.isStreaming) && (
+          <div
+            className={`mt-2 flex items-center justify-between gap-3 text-[11px] opacity-70 ${
+              isUser ? 'text-emerald-100' : 'text-slate-400'
+            }`}
+          >
+            <span>{message.timestamp}</span>
 
-          {!isUser && message.text && (
-            <button
-              onClick={handleCopy}
-              title="คัดลอกข้อความ"
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium transition hover:bg-slate-100 hover:text-slate-700"
-            >
-              {copied ? (
-                <>
-                  <Check className="h-3 w-3 text-emerald-600" />
-                  <span className="text-emerald-600">คัดลอกแล้ว</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3 w-3" />
-                  <span>คัดลอก</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
+            {!isUser && message.text && (
+              <button
+                onClick={handleCopy}
+                title="คัดลอกข้อความ"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium transition hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-3 w-3 text-emerald-600" />
+                    <span className="text-emerald-600">คัดลอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" />
+                    <span>คัดลอก</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

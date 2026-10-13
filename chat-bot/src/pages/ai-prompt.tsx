@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import type { ImageAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
@@ -267,7 +267,16 @@ const AIPromptPage: React.FC = () => {
   });
 
   // Prompt History state สำหรับปุ่มลูกศรขึ้น/ลง (Arrow Up / Down)
-  const [promptHistory, setPromptHistory] = useState<string[]>([]);
+  const [promptHistory, setPromptHistory] = useState<string[]>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    const target = (savedActiveId && all.find((s) => s.id === savedActiveId)) || (all.length > 0 ? all[0] : null);
+    if (!target) return [];
+    return target.messages
+      .filter((m) => m.sender === 'user' && m.text.trim())
+      .map((m) => m.text.trim())
+      .filter((text, idx, arr) => idx === 0 || text !== arr[idx - 1]);
+  });
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
 
   // Summarizer & Context Compression state
@@ -294,6 +303,10 @@ const AIPromptPage: React.FC = () => {
     const detected = aiService.detectModelType();
     return getDefaultBasePrompt(detected.modelName) + POLICY_CLAUSE;
   });
+  const systemPromptRef = useRef<string>(systemPrompt);
+  useEffect(() => {
+    systemPromptRef.current = systemPrompt;
+  }, [systemPrompt]);
   const [temperature, setTemperature] = useState<number>(() => {
     const savedActiveId = chatHistoryService.getActiveSessionId();
     const all = chatHistoryService.getAllSessions();
@@ -495,115 +508,196 @@ const AIPromptPage: React.FC = () => {
 
   const handleTogglePolicyInPrompt = useCallback((shouldAppend: boolean) => {
     setSystemPrompt((prev) => {
+      let next = prev;
       if (shouldAppend) {
-        if (prev.includes(POLICY_MARKER)) return prev;
-        return prev.trim() + POLICY_CLAUSE;
+        if (!prev.includes(POLICY_MARKER)) {
+          next = prev.trim() + POLICY_CLAUSE;
+        }
       } else {
-        if (!prev.includes(POLICY_MARKER)) return prev;
-        const markerIndex = prev.indexOf(POLICY_MARKER);
-        return prev.substring(0, markerIndex).trim();
+        if (prev.includes(POLICY_MARKER)) {
+          const markerIndex = prev.indexOf(POLICY_MARKER);
+          next = prev.substring(0, markerIndex).trim();
+        }
       }
+      systemPromptRef.current = next;
+      return next;
     });
-  }, [setSystemPrompt]);
+  }, []);
 
 
 
   // Context Compression using Summarizer API
-  const handleCompressChatContext = useCallback(async (targetMessages?: Message[]) => {
-    const rawMessages =
-      targetMessages ??
-      (messagesRef.current || messages).filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim());
-    if (rawMessages.length === 0 || isCompressingContext) return;
+  const handleCompressChatContext = useCallback(
+    async (targetMessages?: Message[], customSystemPrompt?: string) => {
+      const currentPrompt = customSystemPrompt || systemPromptRef.current || systemPrompt;
+      const allActive = (messagesRef.current || messages).filter(
+        (m) => !m.isCompressedContext && m.text.trim()
+      );
+      const uncompacted = allActive.filter((m) => !m.isCompacted);
 
-    setIsCompressingContext(true);
-    try {
-      let result;
+      // If triggered manually by user without specific target messages
+      if (!targetMessages) {
+        if (allActive.length === 0) {
+          alert('ยังไม่มีประวัติการสนทนาในห้องนี้สำหรับการบีบอัด');
+          return null;
+        }
+        if (uncompacted.length === 0) {
+          alert('ประวัติการสนทนาทั้งหมดในห้องนี้ได้รับการบีบอัดลงในบริบทเรียบร้อยแล้ว');
+          setIsSummaryModalOpen(false);
+          return null;
+        }
+        if (uncompacted.length < 2) {
+          alert('จำเป็นต้องมีบทสนทนาอย่างน้อย 2 ข้อความ (คำถามและคำตอบ) ขึ้นไปเพื่อทำการบีบอัดบริบท');
+          return null;
+        }
+      }
+
+      const rawMessages = targetMessages ?? uncompacted;
+      if (rawMessages.length === 0 || isCompressingContext) return null;
+
+      setIsCompressingContext(true);
       try {
-        result = await summarizerService.compressChatContext(
-          rawMessages.map((m) => ({ sender: m.sender, text: m.text })),
-          systemPrompt
-        );
-      } catch (compressErr) {
-        console.warn('Context compression error, using dynamic fallback:', compressErr);
-        const firstQ = rawMessages[0]?.text?.substring(0, 80) || 'การสนทนาทั่วไป';
-        const fallbackSummary = `สรุปประวัติเดิม: การสนทนาเกี่ยวกับ "${firstQ}" ได้รับการจัดเก็บลงในบริบทความจำเรียบร้อยแล้ว`;
-        const contextHeader = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' + fallbackSummary + '\n---';
-        const cleanBase = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
-        result = {
-          compressedSummary: fallbackSummary,
-          newSystemPrompt: cleanBase + contextHeader,
-          originalTokens: 800,
-          compressedTokens: 150,
-          savedTokens: 650,
-          percentageSaved: 81,
+        let result;
+        try {
+          result = await summarizerService.compressChatContext(
+            rawMessages.map((m) => ({ sender: m.sender, text: m.text })),
+            currentPrompt
+          );
+        } catch (compressErr) {
+          console.warn('Context compression error, using dynamic fallback:', compressErr);
+          const firstQ = rawMessages[0]?.text?.substring(0, 80) || 'การสนทนาทั่วไป';
+          const fallbackSummary = `สรุปประวัติเดิม: การสนทนาเกี่ยวกับ "${firstQ}" ได้รับการจัดเก็บลงในบริบทความจำเรียบร้อยแล้ว`;
+          const contextHeader = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' + fallbackSummary + '\n---';
+          const cleanBase = currentPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
+          result = {
+            compressedSummary: fallbackSummary,
+            newSystemPrompt: cleanBase + contextHeader,
+            originalTokens: 800,
+            compressedTokens: 150,
+            savedTokens: 650,
+            percentageSaved: 81,
+          };
+        }
+
+        const compressionNotice: Message = {
+          id: `compress-${generateId()}`,
+          sender: 'system',
+          text: result.compressedSummary,
+          timestamp: getCurrentTime(),
+          isCompressedContext: true,
+          compressionStats: {
+            originalTokens: result.originalTokens,
+            compressedTokens: result.compressedTokens,
+            savedTokens: result.savedTokens,
+            percentageSaved: result.percentageSaved,
+          },
         };
-      }
 
-      const compressionNotice: Message = {
-        id: `compress-${generateId()}`,
-        sender: 'system',
-        text: result.compressedSummary,
-        timestamp: getCurrentTime(),
-        isCompressedContext: true,
-        compressionStats: {
-          originalTokens: result.originalTokens,
-          compressedTokens: result.compressedTokens,
-          savedTokens: result.savedTokens,
-          percentageSaved: result.percentageSaved,
-        },
-      };
+        // Reset prompt session with the new compressed context injected into system prompt
+        systemPromptRef.current = result.newSystemPrompt;
+        setSystemPrompt(result.newSystemPrompt);
+        aiService.resetSession();
+        await aiService.initSession({
+          systemPrompt: result.newSystemPrompt,
+          temperature,
+          topK,
+        });
 
-      // Reset prompt session with the new compressed context injected into system prompt
-      setSystemPrompt(result.newSystemPrompt);
-      aiService.resetSession();
-      await aiService.initSession({
-        systemPrompt: result.newSystemPrompt,
-        temperature,
-        topK,
-      });
-
-      // Mark target messages as compacted and insert the "Conversation compacted" divider
-      const targetIds = new Set(rawMessages.map((m) => m.id));
-      const currentList = messagesRef.current;
-      let lastTargetIndex = -1;
-      for (let i = 0; i < currentList.length; i++) {
-        if (targetIds.has(currentList[i].id)) {
-          lastTargetIndex = i;
+        // Mark target messages as compacted and insert the "Conversation compacted" divider
+        const targetIds = new Set(rawMessages.map((m) => m.id));
+        const currentList = messagesRef.current;
+        let lastTargetIndex = -1;
+        for (let i = 0; i < currentList.length; i++) {
+          if (targetIds.has(currentList[i].id)) {
+            lastTargetIndex = i;
+          }
         }
-      }
 
-      const resultList: Message[] = [];
-      for (let i = 0; i < currentList.length; i++) {
-        const msg = currentList[i];
-        if (targetIds.has(msg.id)) {
-          resultList.push({ ...msg, isCompacted: true });
-        } else {
-          resultList.push(msg);
+        const resultList: Message[] = [];
+        for (let i = 0; i < currentList.length; i++) {
+          const msg = currentList[i];
+          if (targetIds.has(msg.id)) {
+            resultList.push({ ...msg, isCompacted: true });
+          } else {
+            resultList.push(msg);
+          }
+          if (i === lastTargetIndex) {
+            resultList.push(compressionNotice);
+          }
         }
-        if (i === lastTargetIndex) {
+
+        if (lastTargetIndex === -1) {
           resultList.push(compressionNotice);
         }
+
+        // Synchronously update messagesRef.current so subsequent code uses compacted messages
+        messagesRef.current = resultList;
+        setMessages(resultList);
+
+        const activeId = currentSessionIdRef.current;
+        if (activeId) {
+          chatHistoryService.updateSessionMessages(activeId, resultList, result.newSystemPrompt);
+          setSessions(chatHistoryService.getAllSessions());
+        }
+
+        setIsSummaryModalOpen(false);
+        return { resultList, newSystemPrompt: result.newSystemPrompt };
+      } catch (err) {
+        console.error('Context compression failed:', err);
+        return null;
+      } finally {
+        setIsCompressingContext(false);
       }
+    },
+    [messages, systemPrompt, temperature, topK, isCompressingContext, setSystemPrompt, setIsSummaryModalOpen]
+  );
 
-      if (lastTargetIndex === -1) {
-        resultList.push(compressionNotice);
-      }
-
-      setMessages(resultList);
-
-      const activeId = currentSessionIdRef.current;
-      if (activeId) {
-        chatHistoryService.updateSessionMessages(activeId, resultList, result.newSystemPrompt);
-        setSessions(chatHistoryService.getAllSessions());
-      }
-
-      setIsSummaryModalOpen(false);
-    } catch (err) {
-      console.error('Context compression failed:', err);
-    } finally {
-      setIsCompressingContext(false);
+  // Stop generation
+  const handleStop = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
-  }, [messages, systemPrompt, temperature, topK, isCompressingContext, setSystemPrompt, setIsSummaryModalOpen]);
+    setIsGenerating(false);
+    setMessages((prev) =>
+      prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
+    );
+  }, []);
+
+  // Start New Chat (Clear current session without losing saved history)
+  const handleNewChat = useCallback(async () => {
+    handleStop();
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setInterimTranscript('');
+    }
+    userScrolledUpRef.current = false;
+    setShowScrollBottomButton(false);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+    setSelectedImage(null);
+    messagesRef.current = [];
+    setMessages([]);
+    setCurrentSessionId(null);
+    chatHistoryService.setActiveSessionId(null);
+    setPromptHistory([]);
+    setHistoryIndex(-1);
+    draftInputRef.current = '';
+
+    const detected = aiService.detectModelType();
+    const defaultPrompt =
+      getDefaultBasePrompt(detected.modelName) + (isPolicyAppended ? POLICY_CLAUSE : '');
+    systemPromptRef.current = defaultPrompt;
+    setSystemPrompt(defaultPrompt);
+    aiService.resetSession();
+    await aiService.initSession({
+      systemPrompt: defaultPrompt,
+      temperature,
+      topK,
+    });
+  }, [handleStop, isListening, isPolicyAppended, temperature, topK]);
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
@@ -619,9 +713,10 @@ const AIPromptPage: React.FC = () => {
     if ((!promptText && !currentImage) || isGenerating) return;
 
     const effectiveUserPrompt = promptText || (currentImage ? 'ช่วยวิเคราะห์รูปภาพนี้' : '');
+    let activeSystemPrompt = systemPromptRef.current || systemPrompt;
 
-    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 800 หรือใช้ไป >= 88%) และมีประวัติเดิม ให้บีบอัดอัตโนมัติก่อนส่ง
-    const activeRawMessages = messages.filter(
+    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 800 หรือใช้ไป >= 88%)
+    const activeRawMessages = (messagesRef.current || messages).filter(
       (m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()
     );
     const estPromptTokens = estimateTokens(effectiveUserPrompt) + 200;
@@ -630,8 +725,29 @@ const AIPromptPage: React.FC = () => {
       tokensSoFar + estPromptTokens >= maxTokens * 0.88 ||
       contextPercentage >= 88;
 
-    if (isTokensLow && activeRawMessages.length >= 2) {
-      await handleCompressChatContext(activeRawMessages);
+    if (isTokensLow) {
+      // หากหน่วยความจำเต็มหรือเกือบเต็ม (9,216/9,216 หรือ tokensLeft <= 150) และไม่มีข้อความให้บีบอัดแล้ว
+      if ((tokensLeft <= 150 || tokensSoFar >= maxTokens) && activeRawMessages.length < 2) {
+        const confirmNewChat = window.confirm(
+          `บริบทการสนทนาเต็มแล้ว (${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens)\n\nระบบไม่สามารถรับคำสั่งเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตา On-Device Model\n\nต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้เลยหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)`
+        );
+        if (confirmNewChat) {
+          await handleNewChat();
+          setTimeout(() => {
+            handleSend(effectiveUserPrompt);
+          }, 80);
+          return;
+        } else {
+          return;
+        }
+      }
+
+      if (activeRawMessages.length >= 2) {
+        const compResult = await handleCompressChatContext(activeRawMessages, activeSystemPrompt);
+        if (compResult) {
+          activeSystemPrompt = compResult.newSystemPrompt;
+        }
+      }
     }
 
     // บันทึกลงใน promptHistory สำหรับการกดลูกศรขึ้น/ลง
@@ -677,6 +793,7 @@ const AIPromptPage: React.FC = () => {
 
     const currentMessages = messagesRef.current;
     const nextMessages = [...currentMessages, userMessageItem, aiMessageItem];
+    messagesRef.current = nextMessages;
     setMessages(nextMessages);
 
     const currentActiveId = currentSessionIdRef.current;
@@ -688,12 +805,12 @@ const AIPromptPage: React.FC = () => {
       const newSession = chatHistoryService.createSession(
         sessionTitle,
         nextMessages,
-        { systemPrompt, temperature, topK }
+        { systemPrompt: activeSystemPrompt, temperature, topK }
       );
       currentSessionIdRef.current = newSession.id;
       setCurrentSessionId(newSession.id);
     } else {
-      chatHistoryService.updateSessionMessages(currentActiveId, nextMessages, systemPrompt);
+      chatHistoryService.updateSessionMessages(currentActiveId, nextMessages, activeSystemPrompt);
     }
     setSessions(chatHistoryService.getAllSessions());
     setIsGenerating(true);
@@ -706,13 +823,15 @@ const AIPromptPage: React.FC = () => {
       await aiService.promptStream(
         effectiveUserPrompt,
         (currentText) => {
-          setMessages((prev) =>
-            prev.map((msg) =>
+          setMessages((prev) => {
+            const updated = prev.map((msg) =>
               msg.id === actualAiId
                 ? { ...msg, text: currentText, isStreaming: true }
                 : msg
-            )
-          );
+            );
+            messagesRef.current = updated;
+            return updated;
+          });
         },
         controller.signal,
         currentImage?.file || null
@@ -724,7 +843,7 @@ const AIPromptPage: React.FC = () => {
         latestMessages
           .filter((m) => !m.isCompacted && !m.isCompressedContext)
           .reduce((acc, m) => acc + (m.text ? estimateTokens(m.text) : 0), 0) +
-        (systemPrompt ? estimateTokens(systemPrompt) : 0);
+        (activeSystemPrompt ? estimateTokens(activeSystemPrompt) : 0);
 
       const postTokensUsage = aiService.getContextTokenUsage(postTotalTokens);
       const priorToCompact = latestMessages.filter(
@@ -739,7 +858,10 @@ const AIPromptPage: React.FC = () => {
         priorToCompact.length >= 2 &&
         !controller.signal.aborted
       ) {
-        await handleCompressChatContext(priorToCompact);
+        const postCompResult = await handleCompressChatContext(priorToCompact, activeSystemPrompt);
+        if (postCompResult) {
+          activeSystemPrompt = postCompResult.newSystemPrompt;
+        }
       }
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
@@ -749,7 +871,7 @@ const AIPromptPage: React.FC = () => {
         latestMessages
           .filter((m) => !m.isCompacted && !m.isCompressedContext)
           .reduce((acc, m) => acc + (m.text ? estimateTokens(m.text) : 0), 0) +
-        (systemPrompt ? estimateTokens(systemPrompt) : 0);
+        (activeSystemPrompt ? estimateTokens(activeSystemPrompt) : 0);
 
       const errTokensUsage = aiService.getContextTokenUsage(errTotalTokens);
 
@@ -777,26 +899,33 @@ const AIPromptPage: React.FC = () => {
       if (isTokenExhausted && priorToCompact.length >= 2) {
         try {
           // 1. บีบอัดประวัติเดิม และแทรกเส้นแบ่ง ──────────────── Conversation compacted ────────────────
-          await handleCompressChatContext(priorToCompact);
+          const errCompResult = await handleCompressChatContext(priorToCompact, activeSystemPrompt);
+          if (errCompResult) {
+            activeSystemPrompt = errCompResult.newSystemPrompt;
+          }
 
           // 2. เคลียร์ข้อความ AI ที่ค้าง เพื่อตอบใหม่ให้สมบูรณ์
-          setMessages((prev) =>
-            prev.map((msg) =>
+          setMessages((prev) => {
+            const cleared = prev.map((msg) =>
               msg.id === actualAiId ? { ...msg, text: '', isStreaming: true } : msg
-            )
-          );
+            );
+            messagesRef.current = cleared;
+            return cleared;
+          });
 
           // 3. ตอบคำถามใหม่ด้วยบริบทความจำที่ถูกบีบอัดแล้ว
           await aiService.promptStream(
             effectiveUserPrompt,
             (retryText) => {
-              setMessages((prev) =>
-                prev.map((msg) =>
+              setMessages((prev) => {
+                const retried = prev.map((msg) =>
                   msg.id === actualAiId
                     ? { ...msg, text: retryText, isStreaming: true }
                     : msg
-                )
-              );
+                );
+                messagesRef.current = retried;
+                return retried;
+              });
             },
             controller.signal,
             currentImage?.file || null
@@ -807,9 +936,29 @@ const AIPromptPage: React.FC = () => {
         }
       }
 
+      if (isTokenExhausted) {
+        console.warn('Prompting stopped due to token limit exhaustion');
+        setMessages((prev) => {
+          const updated = prev.map((msg) =>
+            msg.id === actualAiId
+              ? {
+                  ...msg,
+                  text:
+                    '⚠️ **หน่วยความจำบริบทเต็มแล้ว (9,216 / 9,216 Tokens)**\n\n' +
+                    'โมเดล On-Device ไม่สามารถประมวลผลคำตอบเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตา แนะนำให้คลิก **"ขึ้นแชทใหม่"** ที่แถบด้านล่าง เพื่อเริ่มต้นการสนทนาใหม่ได้อย่างราบรื่น (ประวัติแชทนี้จะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)',
+                  isStreaming: false,
+                }
+              : msg
+          );
+          messagesRef.current = updated;
+          return updated;
+        });
+        return;
+      }
+
       console.error('Prompting failed:', err);
-      setMessages((prev) =>
-        prev.map((msg) =>
+      setMessages((prev) => {
+        const updated = prev.map((msg) =>
           msg.id === actualAiId
             ? {
                 ...msg,
@@ -819,8 +968,10 @@ const AIPromptPage: React.FC = () => {
                 isStreaming: false,
               }
             : msg
-        )
-      );
+        );
+        messagesRef.current = updated;
+        return updated;
+      });
     } finally {
       setIsGenerating(false);
       abortControllerRef.current = null;
@@ -834,57 +985,16 @@ const AIPromptPage: React.FC = () => {
             }
           : msg
       );
+      messagesRef.current = finalMessages;
       setMessages(finalMessages);
 
       const activeId = currentSessionIdRef.current;
       if (activeId) {
-        chatHistoryService.updateSessionMessages(activeId, finalMessages, systemPrompt);
+        chatHistoryService.updateSessionMessages(activeId, finalMessages, activeSystemPrompt);
         setSessions(chatHistoryService.getAllSessions());
       }
     }
   };
-
-  // Stop generation
-  const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsGenerating(false);
-    setMessages((prev) =>
-      prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
-    );
-  };
-
-  // Start New Chat (Clear current session without losing saved history)
-  const handleNewChat = useCallback(async () => {
-    handleStop();
-    if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
-    }
-    userScrolledUpRef.current = false;
-    setShowScrollBottomButton(false);
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
-    }
-    setSelectedImage(null);
-    setMessages([]);
-    setCurrentSessionId(null);
-    chatHistoryService.setActiveSessionId(null);
-
-    const detected = aiService.detectModelType();
-    const defaultPrompt =
-      getDefaultBasePrompt(detected.modelName) + (isPolicyAppended ? POLICY_CLAUSE : '');
-    setSystemPrompt(defaultPrompt);
-    aiService.resetSession();
-    await aiService.initSession({
-      systemPrompt: defaultPrompt,
-      temperature,
-      topK,
-    });
-  }, [isListening, isPolicyAppended, temperature, topK]);
 
   // Select an existing session from history
   const handleSelectSession = useCallback(
@@ -899,7 +1009,15 @@ const AIPromptPage: React.FC = () => {
       setSelectedImage(null);
       setCurrentSessionId(session.id);
       chatHistoryService.setActiveSessionId(session.id);
+      messagesRef.current = session.messages;
       setMessages(session.messages);
+      const sessionUserPrompts = session.messages
+        .filter((m) => m.sender === 'user' && m.text.trim())
+        .map((m) => m.text.trim())
+        .filter((text, idx, arr) => idx === 0 || text !== arr[idx - 1]);
+      setPromptHistory(sessionUserPrompts);
+      setHistoryIndex(-1);
+      draftInputRef.current = '';
       userScrolledUpRef.current = false;
       setShowScrollBottomButton(false);
       setTimeout(() => {
@@ -910,6 +1028,7 @@ const AIPromptPage: React.FC = () => {
       const targetPrompt =
         session.systemPrompt ||
         getDefaultBasePrompt(detected.modelName) + (isPolicyAppended ? POLICY_CLAUSE : '');
+      systemPromptRef.current = targetPrompt;
       setSystemPrompt(targetPrompt);
       if (session.temperature !== undefined) setTemperature(session.temperature);
       if (session.topK !== undefined) setTopK(session.topK);
@@ -921,7 +1040,7 @@ const AIPromptPage: React.FC = () => {
         topK: session.topK ?? topK,
       });
     },
-    [isListening, isPolicyAppended, scrollToBottom, temperature, topK]
+    [handleStop, isListening, isPolicyAppended, scrollToBottom, temperature, topK]
   );
 
   // Delete a session from history
@@ -957,10 +1076,15 @@ const AIPromptPage: React.FC = () => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
+    messagesRef.current = [];
     setMessages([]);
     setSelectedImage(null);
     setCurrentSessionId(null);
     chatHistoryService.setActiveSessionId(null);
+    setPromptHistory([]);
+    setHistoryIndex(-1);
+    draftInputRef.current = '';
+    systemPromptRef.current = systemPrompt;
     aiService.resetSession();
     await aiService.initSession({
       systemPrompt,
@@ -983,7 +1107,7 @@ const AIPromptPage: React.FC = () => {
       const isAtStart = textareaRef.current
         ? textareaRef.current.selectionStart === 0 && textareaRef.current.selectionEnd === 0
         : true;
-      if (promptHistory.length > 0 && (isAtStart || inputMessage === '')) {
+      if (promptHistory.length > 0 && (isAtStart || inputMessage === '' || historyIndex !== -1)) {
         e.preventDefault();
         if (historyIndex === -1) {
           draftInputRef.current = inputMessage;
@@ -1209,12 +1333,20 @@ const AIPromptPage: React.FC = () => {
                 {contextPercentage}%
               </span>
 
-              {isCompressingContext && (
+              {isCompressingContext ? (
                 <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-pulse">
                   <RefreshCw className="h-3 w-3 animate-spin text-emerald-600" />
                   กำลังบีบอัดบริบทอัตโนมัติ...
                 </span>
-              )}
+              ) : isGenerating ? (
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-in fade-in duration-150">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span>AI กำลังประมวลผล...</span>
+                </span>
+              ) : null}
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">
@@ -1236,6 +1368,40 @@ const AIPromptPage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Warning / Action Banner when Context is Full or Near-Full (>= 88% or tokensLeft <= 800) */}
+          {(contextPercentage >= 88 || tokensLeft <= 800) && messages.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-rose-200 bg-rose-50/95 p-2.5 text-xs text-rose-900 shadow-2xs animate-in fade-in duration-150">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span className="text-xs leading-relaxed">
+                  <strong>บริบทความจำใกล้เต็ม ({tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T)</strong>:
+                  {' '}คุณสามารถเลือกบีบอัดประวัติเดิม หรือเปิดห้องแชทใหม่ได้
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleCompressChatContext()}
+                  disabled={isCompressingContext}
+                  className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1 text-xs font-bold text-white shadow-2xs hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition cursor-pointer"
+                  title="บีบอัดประวัติเดิมลงในหน่วยความจำเพื่อลดการใช้ Tokens"
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  <span>{isCompressingContext ? 'กำลังบีบอัด...' : 'บีบอัดประวัติ'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNewChat}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-800 shadow-2xs hover:bg-rose-100 active:scale-95 transition cursor-pointer"
+                  title="เริ่มการสนทนาใหม่ (ประวัติเดิมจะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)"
+                >
+                  <Plus className="h-3.5 w-3.5 text-rose-600" />
+                  <span>ขึ้นแชทใหม่</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Textarea Input Container */}
           <div
@@ -1457,7 +1623,11 @@ const AIPromptPage: React.FC = () => {
         isOpen={isSummaryModalOpen}
         onClose={() => setIsSummaryModalOpen(false)}
         messages={summaryModalMessages}
-        onCompressAndContinue={handleCompressChatContext}
+        uncompactedCount={messages.filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()).length}
+        onCompressAndContinue={async () => {
+          await handleCompressChatContext();
+        }}
+        onNewChat={handleNewChat}
         isCompressing={isCompressingContext}
         modelName={activeModelInfo.modelName}
       />

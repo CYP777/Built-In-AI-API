@@ -361,6 +361,24 @@ class AIService {
         await this.initSession();
       }
 
+      // Extract compressed memory context from currentSystemPrompt if present
+      let memorySnippet = '';
+      const startMarker = '[บริบทประวัติเดิมที่ถูกบีบอัด]:';
+      if (this.currentSystemPrompt.includes(startMarker)) {
+        const parts = this.currentSystemPrompt.split(startMarker)[1];
+        if (parts) {
+          memorySnippet = parts
+            .split('[คำสั่งสำคัญสำหรับ AI]')[0]
+            .split('---')[0]
+            .trim();
+        }
+      }
+
+      const effectivePromptText =
+        memorySnippet && !imageFile
+          ? `[บริบทความจำจากการสนทนาก่อนหน้านี้ที่คุณเพิ่งคุยกับผู้ใช้]:\n${memorySnippet}\n\n[ข้อความหรือคำถามล่าสุดจากผู้ใช้]:\n${userMessage}`
+          : userMessage;
+
       // If an image is attached, create/use multimodal session
       let sessionToUse = this.session;
       let isolatedMultimodalSession: AILanguageModelSession | null = null;
@@ -397,14 +415,17 @@ class AIService {
       if (sessionToUse) {
         try {
           const imagePayloadValue = (imageBitmap || imageFile)!;
-          let promptPayload: AIPromptInput = userMessage;
+          let promptPayload: AIPromptInput = effectivePromptText;
 
           if (imageFile) {
+            const textVal = memorySnippet
+              ? `[บริบทความจำก่อนหน้า]:\n${memorySnippet}\n\n${userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด'}`
+              : userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด';
             promptPayload = [
               {
                 role: 'user',
                 content: [
-                  { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                  { type: 'text', value: textVal },
                   { type: 'image', value: imagePayloadValue },
                 ],
               },
@@ -418,8 +439,11 @@ class AIService {
                 stream = sessionToUse.promptStreaming(promptPayload, { signal });
               } catch (payloadErr) {
                 if (imageFile) {
+                  const textVal = memorySnippet
+                    ? `[บริบทความจำก่อนหน้า]:\n${memorySnippet}\n\n${userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด'}`
+                    : userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด';
                   const flatParts: Array<AIMultimodalPart> = [
-                    { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
+                    { type: 'text', value: textVal },
                     { type: 'image', value: imagePayloadValue },
                   ];
                   stream = sessionToUse.promptStreaming(flatParts, { signal });
@@ -541,7 +565,7 @@ class AIService {
           console.warn('Prompt error, attempting recreation...', err);
           await this.initSession();
           if (this.session) {
-            const rawAnswer = await this.session.prompt(userMessage, { signal });
+            const rawAnswer = await this.session.prompt(effectivePromptText, { signal });
             const loopCheck = detectRepetitionLoop(rawAnswer);
             const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
             onChunk(answer);
@@ -577,7 +601,17 @@ class AIService {
     signal?: AbortSignal,
     imageFile?: File | Blob | null
   ): Promise<string> {
-    const hasCompressedContext = this.currentSystemPrompt.includes('[บริบทประวัติเดิมที่ถูกบีบอัด]:');
+    let memorySnippet = '';
+    const startMarker = '[บริบทประวัติเดิมที่ถูกบีบอัด]:';
+    if (this.currentSystemPrompt.includes(startMarker)) {
+      const parts = this.currentSystemPrompt.split(startMarker)[1];
+      if (parts) {
+        memorySnippet = parts
+          .split('[คำสั่งสำคัญสำหรับ AI]')[0]
+          .split('---')[0]
+          .trim();
+      }
+    }
 
     let reply: string;
     if (imageFile) {
@@ -589,8 +623,20 @@ class AIService {
         `- **ไฟล์ที่แนบมา**: \`${fileName}\` (${fileSizeKb} KB, \`${fileType}\`)\n` +
         `- **สาเหตุ**: เซสชันของโมเดล AI บน Chrome ในเครื่องยังไม่พร้อมทำงานจริง\n\n` +
         `กรุณาตรวจสอบว่าสถานะ Built-in AI ที่แถบด้านบนขึ้นเป็นสีเขียว เพื่อให้โมเดล AI ในเครื่องเป็นผู้มองเห็นและวิเคราะห์รูปภาพจริงครับ`;
-    } else if (hasCompressedContext) {
-      reply = `เข้าใจแล้วครับ! ผมจำบริบทเดิมจากการสนทนาก่อนหน้าที่ถูกบีบอัดไว้ได้เรียบร้อยแล้ว\n\nสำหรับข้อความล่าสุด: "${userMessage}"\nผมพร้อมตอบคำถามและสนทนาต่ออย่างต่อเนื่องครับ! 😊`;
+    } else if (memorySnippet) {
+      const isAskingMemory =
+        userMessage.includes('จำได้') ||
+        userMessage.includes('เมื่อกี้') ||
+        userMessage.includes('คุยอะไร') ||
+        userMessage.includes('ก่อนหน้านี้') ||
+        userMessage.includes('เรื่องเดิม') ||
+        userMessage.includes('ประวัติ');
+
+      if (isAskingMemory) {
+        reply = `จำได้แน่นอนครับ! จากประวัติการสนทนาก่อนหน้านี้ที่เราคุยกัน:\n\n${memorySnippet}\n\nคุณมีคำถามเพิ่มเติมเกี่ยวกับประเด็นนี้ หรือต้องการคุยต่อเรื่องไหน ยินดีเลยครับ! 😊`;
+      } else {
+        reply = `เข้าใจแล้วครับ! (อ้างอิงจากบริบทประวัติเดิมที่คุยกัน: ${memorySnippet.substring(0, 80)}...)\n\nสำหรับข้อความล่าสุด: "${userMessage}"\nผมพร้อมตอบคำถามและสนทนาต่ออย่างต่อเนื่องครับ! 😊`;
+      }
     } else {
       const lower = userMessage.toLowerCase();
       if (
