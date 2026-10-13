@@ -9,8 +9,6 @@
 
 เว็บแอปพลิเคชันแชทบอทที่รันโมเดลภาษาบนเครื่องของผู้ใช้โดยตรง (On-Device AI) ผ่าน Chrome Built-in AI (Prompt API และ Summarizer API) โดยใช้โมเดล Gemma และ Gemini Nano จาก Google DeepMind ข้อความและรูปภาพทั้งหมดประมวลผลผ่าน GPU ในเครื่อง ไม่ต้องส่งข้อมูลไปยังเซิร์ฟเวอร์ภายนอก
 
-> โครงการสหกิจศึกษา (Cooperative Education Project), ภาควิชาวิศวกรรมคอมพิวเตอร์ (CPE)
-
 ## คุณสมบัติการทำงาน
 
 ### ความเป็นส่วนตัวและการประมวลผลในเครื่อง
@@ -27,6 +25,9 @@
 
 ### พิมพ์ข้อความด้วยเสียง
 แปลงเสียงพูดเป็นข้อความได้ทั้งภาษาไทยและภาษาอังกฤษ โดยใช้ระบบ Speech Recognition ที่รันบนอุปกรณ์ของ Chrome
+
+### บันทึกและดูประวัติการแชท (Chat History)
+บันทึกบทสนทนาลงในเครื่อง (LocalStorage) อัตโนมัติ ปิดแท็บหรือรีเฟรชแล้วข้อมูลไม่สูญหาย มีแถบ Sidebar พับเก็บได้สำหรับดูประวัติย้อนหลัง ค้นหาแชทเก่า สลับห้องสนทนา เปลี่ยนชื่อหัวข้อ (Rename) และลบประวัติการสนทนา
 
 ### การป้องกันข้อผิดพลาดและโหมดจำลอง
 ระบบตรวจจับและตัดลูปข้อความซ้ำอัตโนมัติ หากโมเดลเริ่มสร้างตัวอักษรหรือประโยคเดิมซ้ำๆ และหากเปิดใช้งานบนเบราว์เซอร์ที่ยังไม่ได้เปิด Flags ระบบจะสลับไปใช้ Mock mode เพื่อให้ยังสามารถทดสอบ UI, markdown, การแสดงโค้ด และฟังก์ชันต่างๆ ได้
@@ -91,6 +92,7 @@ Built-In-AI-API/
     ├── src/
     │   ├── components/     # UI Components
     │   │   ├── ChatHeader.tsx          # แถบ Header แสดงสถานะ Badge และปุ่มคำสั่ง
+    │   │   ├── ChatHistorySidebar.tsx  # แถบ Sidebar แสดงประวัติการสนทนา ค้นหา และสลับห้อง
     │   │   ├── ChatMessage.tsx         # กล่องข้อความแชท, Markdown, Lightbox
     │   │   ├── PolicyModal.tsx         # หน้าต่างข้อกำหนดนโยบายความปลอดภัย AI
     │   │   ├── SettingsModal.tsx       # หน้าต่างตั้งค่าอุณหภูมิ (Temperature, Top-K)
@@ -100,10 +102,12 @@ Built-In-AI-API/
     │   │   └── ai-prompt.tsx           # หน้าจอหลักของระบบแชทบอท
     │   ├── services/       # Service Layer เชื่อมต่อกับเบราว์เซอร์
     │   │   ├── ai-service.ts           # ควบคุม Prompt API, Session, Repetition Loop Cutoff
+    │   │   ├── chat-history-service.ts # ควบคุมการจัดเก็บ บันทึก และค้นหาประวัติการแชท
     │   │   ├── summarizer-service.ts   # ควบคุม Summarizer API และ Context Compression
     │   │   └── speech-service.ts       # ควบคุมระบบพิมพ์ด้วยเสียง Speech-to-Text
     │   ├── types/
-    │   │   └── ai.d.ts                 # Type Definitions ของ Chrome Built-in AI
+    │   │   ├── ai.d.ts                 # Type Definitions ของ Chrome Built-in AI
+    │   │   └── chat-history.ts         # Type Definitions ของระบบประวัติการแชท
     │   ├── utils/
     │   │   └── markdown.ts             # เครื่องมือจัดการข้อความ Markdown และ Plain Text
     │   ├── App.tsx
