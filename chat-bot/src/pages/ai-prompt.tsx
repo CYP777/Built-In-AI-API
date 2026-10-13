@@ -3,12 +3,15 @@ import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge,
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import type { ImageAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
+import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { SettingsModal } from '../components/SettingsModal';
 import { PolicyModal } from '../components/PolicyModal';
 import { SummaryModal } from '../components/SummaryModal';
 import { aiService, estimateTokens, type AIServiceState } from '../services/ai-service';
 import { summarizerService } from '../services/summarizer-service';
 import { speechService } from '../services/speech-service';
+import { chatHistoryService } from '../services/chat-history-service';
+import type { ChatSession } from '../types/chat-history';
 
 const QUICK_PROMPTS = [
   {
@@ -54,7 +57,26 @@ function getCurrentTime(): string {
 }
 
 const AIPromptPage: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Chat History & Session State
+  const [sessions, setSessions] = useState<ChatSession[]>(() => chatHistoryService.getAllSessions());
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    if (savedActiveId && all.some((s) => s.id === savedActiveId)) {
+      return savedActiveId;
+    }
+    return all.length > 0 ? all[0].id : null;
+  });
+  const currentSessionIdRef = useRef<string | null>(currentSessionId);
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    const target = (savedActiveId && all.find((s) => s.id === savedActiveId)) || (all.length > 0 ? all[0] : null);
+    return target ? target.messages : [];
+  });
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
@@ -67,7 +89,14 @@ const AIPromptPage: React.FC = () => {
   const draftInputRef = useRef<string>('');
   const speechBaseTextRef = useRef<string>('');
   const messagesRef = useRef<Message[]>(messages);
-  messagesRef.current = messages;
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   // Helper to read File into persistent Data URL and set selectedImage
   const processImageFile = useCallback((file: File, fallbackName?: string) => {
@@ -258,11 +287,25 @@ const AIPromptPage: React.FC = () => {
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [systemPrompt, setSystemPrompt] = useState<string>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    const target = (savedActiveId && all.find((s) => s.id === savedActiveId)) || (all.length > 0 ? all[0] : null);
+    if (target?.systemPrompt) return target.systemPrompt;
     const detected = aiService.detectModelType();
     return getDefaultBasePrompt(detected.modelName) + POLICY_CLAUSE;
   });
-  const [temperature, setTemperature] = useState<number>(0.4);
-  const [topK, setTopK] = useState<number>(3);
+  const [temperature, setTemperature] = useState<number>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    const target = (savedActiveId && all.find((s) => s.id === savedActiveId)) || (all.length > 0 ? all[0] : null);
+    return target?.temperature ?? 0.4;
+  });
+  const [topK, setTopK] = useState<number>(() => {
+    const savedActiveId = chatHistoryService.getActiveSessionId();
+    const all = chatHistoryService.getAllSessions();
+    const target = (savedActiveId && all.find((s) => s.id === savedActiveId)) || (all.length > 0 ? all[0] : null);
+    return target?.topK ?? 3;
+  });
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   // Auto-detected Model Information
@@ -277,17 +320,22 @@ const AIPromptPage: React.FC = () => {
   // Handle scroll position detection: allow user to scroll up freely without being forced down
   const handleScroll = useCallback(() => {
     if (!scrollContainerRef.current) return;
+    if (messages.length === 0) {
+      userScrolledUpRef.current = false;
+      setShowScrollBottomButton(false);
+      return;
+    }
     const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
 
-    if (distanceFromBottom > 100) {
+    if (scrollHeight > clientHeight && distanceFromBottom > 100) {
       userScrolledUpRef.current = true;
       setShowScrollBottomButton(true);
     } else {
       userScrolledUpRef.current = false;
       setShowScrollBottomButton(false);
     }
-  }, []);
+  }, [messages.length]);
 
   // Scroll to bottom helper (instant during streaming, smooth on user request)
   const scrollToBottom = useCallback((smooth = false) => {
@@ -307,6 +355,13 @@ const AIPromptPage: React.FC = () => {
 
   // Auto-scroll to bottom of messages only when user hasn't scrolled up
   useEffect(() => {
+    if (messages.length === 0) {
+      userScrolledUpRef.current = false;
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+      return;
+    }
     if (userScrolledUpRef.current) return;
     if (scrollContainerRef.current) {
       // Direct scrollTop assignment does NOT block or fight the mouse wheel
@@ -451,25 +506,7 @@ const AIPromptPage: React.FC = () => {
     });
   }, [setSystemPrompt]);
 
-  // Reset Session
-  const handleResetSession = async () => {
-    handleStop();
-    if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
-    }
-    setSelectedImage(null);
-    setMessages([]);
-    const cleanPrompt = systemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
-    setSystemPrompt(cleanPrompt);
-    aiService.resetSession();
-    await aiService.initSession({
-      systemPrompt: cleanPrompt,
-      temperature,
-      topK,
-    });
-  };
+
 
   // Context Compression using Summarizer API
   const handleCompressChatContext = useCallback(async (targetMessages?: Message[]) => {
@@ -527,33 +564,38 @@ const AIPromptPage: React.FC = () => {
 
       // Mark target messages as compacted and insert the "Conversation compacted" divider
       const targetIds = new Set(rawMessages.map((m) => m.id));
-      setMessages((prev) => {
-        let lastTargetIndex = -1;
-        for (let i = 0; i < prev.length; i++) {
-          if (targetIds.has(prev[i].id)) {
-            lastTargetIndex = i;
-          }
+      const currentList = messagesRef.current;
+      let lastTargetIndex = -1;
+      for (let i = 0; i < currentList.length; i++) {
+        if (targetIds.has(currentList[i].id)) {
+          lastTargetIndex = i;
         }
+      }
 
-        const resultList: Message[] = [];
-        for (let i = 0; i < prev.length; i++) {
-          const msg = prev[i];
-          if (targetIds.has(msg.id)) {
-            resultList.push({ ...msg, isCompacted: true });
-          } else {
-            resultList.push(msg);
-          }
-          if (i === lastTargetIndex) {
-            resultList.push(compressionNotice);
-          }
+      const resultList: Message[] = [];
+      for (let i = 0; i < currentList.length; i++) {
+        const msg = currentList[i];
+        if (targetIds.has(msg.id)) {
+          resultList.push({ ...msg, isCompacted: true });
+        } else {
+          resultList.push(msg);
         }
-
-        if (lastTargetIndex === -1) {
+        if (i === lastTargetIndex) {
           resultList.push(compressionNotice);
         }
+      }
 
-        return resultList;
-      });
+      if (lastTargetIndex === -1) {
+        resultList.push(compressionNotice);
+      }
+
+      setMessages(resultList);
+
+      const activeId = currentSessionIdRef.current;
+      if (activeId) {
+        chatHistoryService.updateSessionMessages(activeId, resultList, result.newSystemPrompt);
+        setSessions(chatHistoryService.getAllSessions());
+      }
 
       setIsSummaryModalOpen(false);
     } catch (err) {
@@ -633,7 +675,27 @@ const AIPromptPage: React.FC = () => {
       isStreaming: true,
     };
 
-    setMessages((prev) => [...prev, userMessageItem, aiMessageItem]);
+    const currentMessages = messagesRef.current;
+    const nextMessages = [...currentMessages, userMessageItem, aiMessageItem];
+    setMessages(nextMessages);
+
+    const currentActiveId = currentSessionIdRef.current;
+    if (!currentActiveId) {
+      const sessionTitle =
+        effectiveUserPrompt.length > 36
+          ? effectiveUserPrompt.substring(0, 36) + '...'
+          : effectiveUserPrompt;
+      const newSession = chatHistoryService.createSession(
+        sessionTitle,
+        nextMessages,
+        { systemPrompt, temperature, topK }
+      );
+      currentSessionIdRef.current = newSession.id;
+      setCurrentSessionId(newSession.id);
+    } else {
+      chatHistoryService.updateSessionMessages(currentActiveId, nextMessages, systemPrompt);
+    }
+    setSessions(chatHistoryService.getAllSessions());
     setIsGenerating(true);
     scrollToBottom(false);
 
@@ -760,19 +822,25 @@ const AIPromptPage: React.FC = () => {
         )
       );
     } finally {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === actualAiId
-            ? {
-                ...msg,
-                text: msg.text || (controller.signal.aborted ? '⏹️ หยุดการสร้างข้อความแล้ว' : msg.text),
-                isStreaming: false,
-              }
-            : msg
-        )
-      );
       setIsGenerating(false);
       abortControllerRef.current = null;
+
+      const finalMessages = messagesRef.current.map((msg) =>
+        msg.id === actualAiId
+          ? {
+              ...msg,
+              text: msg.text || (controller.signal.aborted ? '⏹️ หยุดการสร้างข้อความแล้ว' : msg.text),
+              isStreaming: false,
+            }
+          : msg
+      );
+      setMessages(finalMessages);
+
+      const activeId = currentSessionIdRef.current;
+      if (activeId) {
+        chatHistoryService.updateSessionMessages(activeId, finalMessages, systemPrompt);
+        setSessions(chatHistoryService.getAllSessions());
+      }
     }
   };
 
@@ -788,19 +856,111 @@ const AIPromptPage: React.FC = () => {
     );
   };
 
-  // New chat (Reset session)
-  const handleClearChat = async () => {
-    if (messages.length === 0) return;
-    if (confirm('ต้องการเริ่มต้นบทสนทนาใหม่ใช่หรือไม่? (ระบบจะเริ่มเซสชันและล้างบริบทเดิม)')) {
-      await handleResetSession();
+  // Start New Chat (Clear current session without losing saved history)
+  const handleNewChat = useCallback(async () => {
+    handleStop();
+    if (isListening) {
+      speechService.stopListening();
+      setIsListening(false);
+      setInterimTranscript('');
     }
-  };
+    userScrolledUpRef.current = false;
+    setShowScrollBottomButton(false);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+    setSelectedImage(null);
+    setMessages([]);
+    setCurrentSessionId(null);
+    chatHistoryService.setActiveSessionId(null);
+
+    const detected = aiService.detectModelType();
+    const defaultPrompt =
+      getDefaultBasePrompt(detected.modelName) + (isPolicyAppended ? POLICY_CLAUSE : '');
+    setSystemPrompt(defaultPrompt);
+    aiService.resetSession();
+    await aiService.initSession({
+      systemPrompt: defaultPrompt,
+      temperature,
+      topK,
+    });
+  }, [isListening, isPolicyAppended, temperature, topK]);
+
+  // Select an existing session from history
+  const handleSelectSession = useCallback(
+    async (session: ChatSession) => {
+      if (session.id === currentSessionIdRef.current) return;
+      handleStop();
+      if (isListening) {
+        speechService.stopListening();
+        setIsListening(false);
+        setInterimTranscript('');
+      }
+      setSelectedImage(null);
+      setCurrentSessionId(session.id);
+      chatHistoryService.setActiveSessionId(session.id);
+      setMessages(session.messages);
+      userScrolledUpRef.current = false;
+      setShowScrollBottomButton(false);
+      setTimeout(() => {
+        scrollToBottom(false);
+      }, 30);
+
+      const detected = aiService.detectModelType();
+      const targetPrompt =
+        session.systemPrompt ||
+        getDefaultBasePrompt(detected.modelName) + (isPolicyAppended ? POLICY_CLAUSE : '');
+      setSystemPrompt(targetPrompt);
+      if (session.temperature !== undefined) setTemperature(session.temperature);
+      if (session.topK !== undefined) setTopK(session.topK);
+
+      aiService.resetSession();
+      await aiService.initSession({
+        systemPrompt: targetPrompt,
+        temperature: session.temperature ?? temperature,
+        topK: session.topK ?? topK,
+      });
+    },
+    [isListening, isPolicyAppended, scrollToBottom, temperature, topK]
+  );
+
+  // Delete a session from history
+  const handleDeleteSession = useCallback(
+    (sessionId: string) => {
+      chatHistoryService.deleteSession(sessionId);
+      setSessions(chatHistoryService.getAllSessions());
+      if (sessionId === currentSessionIdRef.current) {
+        handleNewChat();
+      }
+    },
+    [handleNewChat]
+  );
+
+  // Rename a session
+  const handleRenameSession = useCallback((sessionId: string, newTitle: string) => {
+    chatHistoryService.renameSession(sessionId, newTitle);
+    setSessions(chatHistoryService.getAllSessions());
+  }, []);
+
+  // Clear all sessions
+  const handleClearAllSessions = useCallback(() => {
+    chatHistoryService.clearAllSessions();
+    setSessions([]);
+    handleNewChat();
+  }, [handleNewChat]);
 
   // Reset Session on settings save
   const handleSaveAndResetSession = async () => {
     handleStop();
+    userScrolledUpRef.current = false;
+    setShowScrollBottomButton(false);
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
     setMessages([]);
     setSelectedImage(null);
+    setCurrentSessionId(null);
+    chatHistoryService.setActiveSessionId(null);
     aiService.resetSession();
     await aiService.initSession({
       systemPrompt,
@@ -892,21 +1052,37 @@ const AIPromptPage: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen w-full flex-col bg-linear-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
-      {/* Header */}
-      <ChatHeader
-        status={statusState.status}
-        statusMessage={statusState.statusMessage}
-        isMock={statusState.isMock}
-        modelName={activeModelInfo.modelName}
-        modelType={activeModelInfo.modelType}
-        onClearChat={handleClearChat}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onRefreshStatus={verifyAI}
-        onOpenPolicy={() => setIsPolicyModalOpen(true)}
-        onOpenSummary={() => setIsSummaryModalOpen(true)}
-        messagesCount={messages.length}
+    <div className="flex h-screen w-full overflow-hidden bg-linear-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
+      {/* Chat History Sidebar */}
+      <ChatHistorySidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onClearAllSessions={handleClearAllSessions}
       />
+
+      {/* Main Chat Area */}
+      <div className="flex flex-1 flex-col h-full overflow-hidden min-w-0">
+        {/* Header */}
+        <ChatHeader
+          status={statusState.status}
+          statusMessage={statusState.statusMessage}
+          isMock={statusState.isMock}
+          modelName={activeModelInfo.modelName}
+          modelType={activeModelInfo.modelType}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onRefreshStatus={verifyAI}
+          onOpenPolicy={() => setIsPolicyModalOpen(true)}
+          onOpenSummary={() => setIsSummaryModalOpen(true)}
+          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          isSidebarOpen={isSidebarOpen}
+          messagesCount={messages.length}
+        />
 
       {/* Optional Notice banner when mock mode is active */}
       {statusState.isMock && !bannerDismissed && (
@@ -994,8 +1170,8 @@ const AIPromptPage: React.FC = () => {
           )}
         </div>
 
-        {/* Floating Scroll-to-Bottom button when user scrolled up */}
-        {showScrollBottomButton && (
+        {/* Floating Scroll-to-Bottom button when user scrolled up in an active chat */}
+        {showScrollBottomButton && messages.length > 0 && (
           <div className="sticky bottom-3 flex justify-end max-w-4xl mx-auto pointer-events-none px-2">
             <button
               type="button"
@@ -1247,6 +1423,7 @@ const AIPromptPage: React.FC = () => {
           </div>
         </div>
       </footer>
+    </div>
 
       {/* Policy Modal (เปิดแจ้งเตือนอัตโนมัติก่อนเริ่มแชทตอนโหลดหน้าครั้งแรก) */}
       <PolicyModal

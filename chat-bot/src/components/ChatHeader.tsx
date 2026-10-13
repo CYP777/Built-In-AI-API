@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bot, Sliders, SquarePen, AlertCircle, RefreshCw, ShieldCheck, FileText } from 'lucide-react';
+import { Bot, Sliders, AlertCircle, RefreshCw, ShieldCheck, FileText, PanelLeft } from 'lucide-react';
 import type { AIStatus } from '../services/ai-service';
 
 interface ChatHeaderProps {
@@ -8,11 +8,13 @@ interface ChatHeaderProps {
   isMock?: boolean;
   modelName?: string;
   modelType?: string;
-  onClearChat: () => void;
+  onClearChat?: () => void;
   onOpenSettings: () => void;
   onRefreshStatus: () => void;
   onOpenPolicy?: () => void;
   onOpenSummary?: () => void;
+  onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
   messagesCount?: number;
   contextTokenUsage?: {
     tokensSoFar: number;
@@ -25,11 +27,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   status,
   statusMessage,
   modelName,
-  onClearChat,
   onOpenSettings,
   onRefreshStatus,
   onOpenPolicy,
   onOpenSummary,
+  onToggleSidebar,
+  isSidebarOpen = false,
   messagesCount = 0,
 }) => {
   const [isSpinning, setIsSpinning] = useState(false);
@@ -100,9 +103,19 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200/70 bg-white/80 px-4 sm:px-6 backdrop-blur-md">
-      {/* Left: Brand / Title */}
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/15">
+      {/* Left: Sidebar Toggle & Brand */}
+      <div className="flex items-center gap-2.5 sm:gap-3">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title={isSidebarOpen ? 'ซ่อนประวัติการแชท' : 'ดูประวัติการแชท'}
+            className="flex md:hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white/70 text-slate-600 shadow-2xs hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 transition active:scale-95 cursor-pointer"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </button>
+        )}
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/15">
           <Bot className="h-5 w-5" />
         </div>
         <div>
@@ -176,16 +189,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           </button>
         )}
 
-        {/* New Chat */}
-        <button
-          type="button"
-          onClick={onClearChat}
-          title="เริ่มบทสนทนาใหม่ (รีเซ็ตบริบท)"
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:border-emerald-300 hover:bg-emerald-50/70 hover:text-emerald-700 transition active:scale-95 cursor-pointer"
-        >
-          <SquarePen className="h-3.5 w-3.5 text-emerald-600" />
-          <span className="hidden sm:inline">แชทใหม่</span>
-        </button>
       </div>
     </header>
   );
