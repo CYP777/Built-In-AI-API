@@ -538,8 +538,6 @@ const AIPromptPage: React.FC = () => {
     });
   }, []);
 
-
-
   // Context Compression using Summarizer API
   const handleCompressChatContext = useCallback(
     async (targetMessages?: Message[], customSystemPrompt?: string) => {
@@ -1315,7 +1313,7 @@ const AIPromptPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <Info className="h-4 w-4 shrink-0 text-amber-600" />
             <span>
-              ขณะนี้ระบบทำงานใน<strong>โหมดจำลอง (Mock Mode)</strong> เนื่องจาก Chrome Built-in AI ยังไม่ได้เปิดใช้งานในเบราว์เซอร์นี้
+              ขณะนี้ระบบทำงานใน<strong>โหมดจำลอง</strong> เนื่องจาก Chrome Built-in AI ยังไม่ได้เปิดใช้งานในเบราว์เซอร์นี้
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1406,73 +1404,10 @@ const AIPromptPage: React.FC = () => {
         )}
       </main>
 
-<<<<<<< Updated upstream
-      {/* Input Form Footer */}
-      <footer className="border-t border-slate-200/80 bg-white p-3 sm:p-4">
-        <div className="mx-auto max-w-4xl space-y-2">
-          {/* Context Window Live Indicator Strip */}
-          <div className="flex items-center justify-between px-2 text-[11px] text-slate-500">
-            <div className="flex items-center gap-2">
-              <Gauge className="h-3.5 w-3.5 text-emerald-600" />
-              <span className="font-bold text-slate-700">Context Window:</span>
-              <span className="font-semibold text-slate-800">
-                {tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T
-              </span>
-              <span
-                className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                  contextPercentage >= 88
-                    ? 'bg-rose-100 text-rose-700'
-                    : contextPercentage >= 70
-                    ? 'bg-amber-100 text-amber-700'
-                    : 'bg-emerald-100 text-emerald-700'
-                }`}
-              >
-                {contextPercentage}%
-              </span>
-
-              {isCompressingContext ? (
-                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-pulse">
-                  <RefreshCw className="h-3 w-3 animate-spin text-emerald-600" />
-                  กำลังบีบอัดบริบทอัตโนมัติ...
-                </span>
-              ) : isGenerating ? (
-                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-in fade-in duration-150">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span>AI กำลังประมวลผล...</span>
-                </span>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-2 sm:gap-3">
-              <span className="hidden sm:inline">
-                คงเหลือ: <strong>{tokensLeft.toLocaleString()} Tokens</strong>
-              </span>
-              {/* Mini progress bar */}
-              <div className="h-1.5 w-16 sm:w-24 rounded-full bg-slate-200 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    contextPercentage >= 88
-                      ? 'bg-red-600'
-                      : contextPercentage >= 70
-                      ? 'bg-amber-500'
-                      : 'bg-emerald-500'
-                  }`}
-                  style={{ width: `${Math.max(3, contextPercentage)}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Warning / Action Banner when Context is Full or Near-Full (>= 88% or tokensLeft <= 800) */}
-=======
       {/* Floating Bottom Input Area */}
       <footer className="relative bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent pt-2 pb-3.5 px-3 sm:px-6 shrink-0">
         <div className="mx-auto max-w-3xl sm:max-w-4xl space-y-2">
           {/* Critical Context Warning (Only appears when context is near-full >= 88% or tokensLeft <= 800) */}
->>>>>>> Stashed changes
           {(contextPercentage >= 88 || tokensLeft <= 800) && messages.length > 0 && (
             <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-2xl bg-amber-50/95 border border-amber-200/90 px-3.5 py-2 text-xs text-amber-900 shadow-sm shadow-amber-500/5 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
               <div className="flex items-center gap-2 min-w-0">
@@ -1499,13 +1434,8 @@ const AIPromptPage: React.FC = () => {
                   className="flex items-center gap-1 rounded-lg border border-slate-300 hover:bg-slate-100 active:scale-95 text-slate-700 bg-white px-2.5 py-1 text-[11px] font-medium shadow-2xs transition cursor-pointer"
                   title="เริ่มการสนทนาใหม่"
                 >
-<<<<<<< Updated upstream
-                  <Plus className="h-3.5 w-3.5 text-rose-600" />
-                  <span>ขึ้นแชทใหม่</span>
-=======
                   <Plus className="h-3 w-3 text-slate-500" />
                   <span>เริ่มแชทใหม่</span>
->>>>>>> Stashed changes
                 </button>
               </div>
             </div>
@@ -1744,20 +1674,9 @@ const AIPromptPage: React.FC = () => {
             </div>
           </div>
 
-<<<<<<< Updated upstream
-          <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-400">
-            <span>Powered by Chrome Built-in AI / Prompt API (Multimodal)</span>
-            <div className="flex items-center gap-2">
-              <span className="hidden sm:inline text-slate-400">
-                (กด ↑ / ↓ เพื่อเลือกประวัติ • วางรูป Ctrl+V • กด 🎙️ เพื่อพูด)
-              </span>
-              <span>{inputMessage.length > 0 ? `${inputMessage.length} ตัวอักษร` : ''}</span>
-            </div>
-=======
           {/* Micro Footer Caption */}
           <div className="text-center text-[11px] text-slate-400/80 px-2 select-none">
             Google Chrome Built-in AI (Prompt API) • ประมวลผลบนเครื่อง (On-Device) ปลอดภัยและเป็นส่วนตัว 100%
->>>>>>> Stashed changes
           </div>
         </div>
       </footer>

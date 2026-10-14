@@ -95,7 +95,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             onClick={onOpenSettings}
           >
             <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
-            <span>โหมดจำลอง (Mock Demo)</span>
+            <span>โหมดจำลอง</span>
           </button>
         );
     }
@@ -123,16 +123,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-tight">
               AI Chatbot
             </h1>
-            <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-500/20">
-              Built-in AI
-            </span>
           </div>
           <p className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
-<<<<<<< Updated upstream
-            แชทบอทประมวลผลด้วยโมเดล On-Device ภายในเครื่อง (Prompt API)
-=======
             โมเดล On-Device (CPU/GPU) บน Notebook &amp; Laptop
->>>>>>> Stashed changes
           </p>
         </div>
       </div>

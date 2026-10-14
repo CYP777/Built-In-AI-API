@@ -226,7 +226,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📋 ประเด็นสำคัญ (Key Points)
+                📋 ประเด็นสำคัญ
               </button>
               <button
                 type="button"
@@ -237,7 +237,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📌 ใจความหลัก (TL;DR)
+                📌 ใจความหลัก
               </button>
               <button
                 type="button"
@@ -248,7 +248,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📰 หัวข้อ (Headline)
+                📰 หัวข้อ
               </button>
             </div>
 
@@ -358,7 +358,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           </div>
 
           {/* Action Buttons: New Chat & Compress */}
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-1 w-full sm:w-auto">
             {onNewChat && (
               <button
                 type="button"
@@ -366,11 +366,11 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   onClose();
                   onNewChat();
                 }}
-                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-400 active:scale-95 transition cursor-pointer"
+                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-emerald-400 active:scale-95 transition cursor-pointer"
                 title="เริ่มการสนทนาในห้องแชทใหม่ (ระบบจะบันทึกประวัติแชทเดิมไว้ในแถบประวัติด้านข้าง)"
               >
                 <Plus className="h-3.5 w-3.5 text-emerald-600" />
-                <span>เริ่มแชทใหม่แทน</span>
+                <span>แชทใหม่</span>
               </button>
             )}
 
@@ -384,15 +384,12 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                 disabled={isCompressing || messages.length === 0 || uncompactedCount === 0}
                 className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 active:scale-95 disabled:opacity-50 transition cursor-pointer disabled:cursor-not-allowed"
               >
-                <Layers className="h-3.5 w-3.5" />
                 <span>
                   {isCompressing
                     ? 'กำลังบีบอัด...'
                     : uncompactedCount === 0
-                    ? 'ประวัติทั้งหมดถูกบีบอัดแล้ว'
-                    : uncompactedCount !== undefined && uncompactedCount > 0
-                    ? `บีบอัดประวัติ (${uncompactedCount} ข้อความ) และสนทนาต่อ`
-                    : 'บีบอัดประวัติและสนทนาต่อ'}
+                    ? 'บีบอัดแล้ว'
+                    : 'บีบอัดและสนทนาต่อ'}
                 </span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
