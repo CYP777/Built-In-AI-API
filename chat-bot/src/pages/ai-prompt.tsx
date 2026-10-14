@@ -524,8 +524,6 @@ const AIPromptPage: React.FC = () => {
     });
   }, []);
 
-
-
   // Context Compression using Summarizer API
   const handleCompressChatContext = useCallback(
     async (targetMessages?: Message[], customSystemPrompt?: string) => {
@@ -1214,7 +1212,7 @@ const AIPromptPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <Info className="h-4 w-4 shrink-0 text-amber-600" />
             <span>
-              ขณะนี้ระบบทำงานใน<strong>โหมดจำลอง (Mock Mode)</strong> เนื่องจาก Chrome Built-in AI ยังไม่ได้เปิดใช้งานในเบราว์เซอร์นี้
+              ขณะนี้ระบบทำงานใน<strong>โหมดจำลอง</strong> เนื่องจาก Chrome Built-in AI ยังไม่ได้เปิดใช้งานในเบราว์เซอร์นี้
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1336,7 +1334,7 @@ const AIPromptPage: React.FC = () => {
               {isCompressingContext ? (
                 <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-pulse">
                   <RefreshCw className="h-3 w-3 animate-spin text-emerald-600" />
-                  กำลังบีบอัดบริบทอัตโนมัติ...
+                  กำลังบีบอัดบริบท...
                 </span>
               ) : isGenerating ? (
                 <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 animate-in fade-in duration-150">
@@ -1397,7 +1395,7 @@ const AIPromptPage: React.FC = () => {
                   title="เริ่มการสนทนาใหม่ (ประวัติเดิมจะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)"
                 >
                   <Plus className="h-3.5 w-3.5 text-rose-600" />
-                  <span>ขึ้นแชทใหม่</span>
+                  <span>เริ่มแชทใหม่</span>
                 </button>
               </div>
             </div>
@@ -1579,7 +1577,7 @@ const AIPromptPage: React.FC = () => {
           </div>
 
           <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-400">
-            <span>Powered by Chrome Built-in AI / Prompt API (Multimodal)</span>
+            <span>Powered by Chrome Built-in AI</span>
             <div className="flex items-center gap-2">
               <span className="hidden sm:inline text-slate-400">
                 (กด ↑ / ↓ เพื่อเลือกประวัติ • วางรูป Ctrl+V • กด 🎙️ เพื่อพูด)
