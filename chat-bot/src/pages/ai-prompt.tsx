@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import type { ImageAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
@@ -12,6 +12,12 @@ import { summarizerService } from '../services/summarizer-service';
 import { speechService } from '../services/speech-service';
 import { chatHistoryService } from '../services/chat-history-service';
 import type { ChatSession } from '../types/chat-history';
+import {
+  detectProfanity,
+  getProfanitySafetyMessage,
+  isProfanityFilterEnabled,
+  setProfanityFilterEnabled,
+} from '../utils/profanity-filter';
 
 const QUICK_PROMPTS = [
   {
@@ -278,6 +284,14 @@ const AIPromptPage: React.FC = () => {
       .filter((text, idx, arr) => idx === 0 || text !== arr[idx - 1]);
   });
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+
+  // Profanity Filter State (ตรวจจับและกรองคำหยาบคายตามนโยบายความปลอดภัย)
+  const [isProfanityFilterActive, setIsProfanityFilterActive] = useState<boolean>(() => isProfanityFilterEnabled());
+  const currentInputProfanity = useMemo(() => {
+    if (!isProfanityFilterActive || !inputMessage.trim()) return null;
+    const res = detectProfanity(inputMessage);
+    return res.hasProfanity ? res : null;
+  }, [inputMessage, isProfanityFilterActive]);
 
   // Summarizer & Context Compression state
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
@@ -564,9 +578,17 @@ const AIPromptPage: React.FC = () => {
             currentPrompt
           );
         } catch (compressErr) {
-          console.warn('Context compression error, using dynamic fallback:', compressErr);
-          const firstQ = rawMessages[0]?.text?.substring(0, 80) || 'การสนทนาทั่วไป';
-          const fallbackSummary = `สรุปประวัติเดิม: การสนทนาเกี่ยวกับ "${firstQ}" ได้รับการจัดเก็บลงในบริบทความจำเรียบร้อยแล้ว`;
+          console.warn('Context compression error, using dynamic multi-turn fallback:', compressErr);
+          const userTopics = rawMessages
+            .filter((m) => m.sender === 'user' && m.text.trim())
+            .map((m) => m.text.trim().replace(/\n+/g, ' '));
+          const topicSummary =
+            userTopics.length > 0
+              ? userTopics
+                  .map((q, idx) => `- ประเด็นที่ ${idx + 1}: ${q.length > 90 ? q.substring(0, 85).trim() : q}`)
+                  .join('\n')
+              : '- สอบถามข้อมูลและสนทนาทั่วไป';
+          const fallbackSummary = `สรุปประวัติเดิม (${userTopics.length} ประเด็น):\n${topicSummary}\n- ข้อสรุป: AI ได้ให้คำตอบและคำแนะนำเรียบร้อยแล้ว`;
           const contextHeader = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' + fallbackSummary + '\n---';
           const cleanBase = currentPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
           result = {
@@ -775,6 +797,56 @@ const AIPromptPage: React.FC = () => {
     const actualUserId = `user-${messageId}`;
     const actualAiId = `ai-${aiMessageId}`;
 
+    // ตรวจสอบคำหยาบคาย (Profanity & Safety Check Trigger)
+    const profanityResult = isProfanityFilterActive
+      ? detectProfanity(effectiveUserPrompt)
+      : { hasProfanity: false, matches: [], matchedWords: [], severity: 'none' as const };
+
+    if (profanityResult.hasProfanity) {
+      const userProfaneItem: Message = {
+        id: actualUserId,
+        sender: 'user',
+        text: effectiveUserPrompt,
+        timestamp: timeString,
+        hasProfanity: true,
+        imageAttachment: currentImage || undefined,
+      };
+
+      const aiSafetyItem: Message = {
+        id: actualAiId,
+        sender: 'ai',
+        text: getProfanitySafetyMessage(profanityResult.matches),
+        timestamp: timeString,
+        isStreaming: false,
+        isSafetyAdvisory: true,
+      };
+
+      const currentMessages = messagesRef.current;
+      const nextMessages = [...currentMessages, userProfaneItem, aiSafetyItem];
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+
+      const currentActiveId = currentSessionIdRef.current;
+      if (!currentActiveId) {
+        const sessionTitle =
+          effectiveUserPrompt.length > 36
+            ? effectiveUserPrompt.substring(0, 36) + '...'
+            : effectiveUserPrompt;
+        const newSession = chatHistoryService.createSession(
+          sessionTitle,
+          nextMessages,
+          { systemPrompt: activeSystemPrompt, temperature, topK }
+        );
+        currentSessionIdRef.current = newSession.id;
+        setCurrentSessionId(newSession.id);
+      } else {
+        chatHistoryService.updateSessionMessages(currentActiveId, nextMessages, activeSystemPrompt);
+      }
+      setSessions(chatHistoryService.getAllSessions());
+      scrollToBottom(false);
+      return;
+    }
+
     const userMessageItem: Message = {
       id: actualUserId,
       sender: 'user',
@@ -836,6 +908,20 @@ const AIPromptPage: React.FC = () => {
         controller.signal,
         currentImage?.file || null
       );
+
+      // 1. ปลดสถานะ Streaming ออกจากข้อความ AI ทันที (หยุดเคอร์เซอร์กะพริบ)
+      setMessages((prev) => {
+        const updated = prev.map((msg) =>
+          msg.id === actualAiId
+            ? { ...msg, isStreaming: false }
+            : msg
+        );
+        messagesRef.current = updated;
+        return updated;
+      });
+
+      // 2. ปลดสถานะ isGenerating เป็น false ทันที เพื่อไม่ให้ปุ่มหรือแถบสถานะด้านล่างค้าง "AI กำลังประมวลผล..."
+      setIsGenerating(false);
 
       // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อย (tokensLeft <= 800 หรือ tokensSoFar >= maxTokens * 0.88) และมีประวัติเดิม ให้บีบอัดอัตโนมัติเพื่อเตรียมพร้อมรอบต่อไป
       const latestMessages = messagesRef.current;
@@ -912,6 +998,7 @@ const AIPromptPage: React.FC = () => {
             messagesRef.current = cleared;
             return cleared;
           });
+          setIsGenerating(true);
 
           // 3. ตอบคำถามใหม่ด้วยบริบทความจำที่ถูกบีบอัดแล้ว
           await aiService.promptStream(
@@ -930,6 +1017,15 @@ const AIPromptPage: React.FC = () => {
             controller.signal,
             currentImage?.file || null
           );
+
+          setMessages((prev) => {
+            const finished = prev.map((msg) =>
+              msg.id === actualAiId ? { ...msg, isStreaming: false } : msg
+            );
+            messagesRef.current = finished;
+            return finished;
+          });
+          setIsGenerating(false);
           return;
         } catch (retryErr) {
           console.error('Retry after token compression failed:', retryErr);
@@ -1176,7 +1272,11 @@ const AIPromptPage: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-linear-to-b from-slate-50 via-white/50 to-slate-50/80 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
+    <div className="relative flex h-screen w-full overflow-hidden bg-slate-50 font-sans text-slate-800 antialiased selection:bg-emerald-500/20 selection:text-emerald-900">
+      {/* Ambient background depth orbs */}
+      <div className="pointer-events-none absolute -top-40 right-10 h-96 w-96 rounded-full bg-emerald-500/5 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-10 left-32 h-96 w-96 rounded-full bg-teal-500/5 blur-3xl" />
+
       {/* Chat History Sidebar */}
       <ChatHistorySidebar
         isOpen={isSidebarOpen}
@@ -1188,6 +1288,7 @@ const AIPromptPage: React.FC = () => {
         onDeleteSession={handleDeleteSession}
         onRenameSession={handleRenameSession}
         onClearAllSessions={handleClearAllSessions}
+        onTogglePin={() => setIsSidebarOpen((prev) => !prev)}
       />
 
       {/* Main Chat Area */}
@@ -1242,40 +1343,35 @@ const AIPromptPage: React.FC = () => {
       >
         <div className="mx-auto max-w-4xl">
           {messages.length === 0 ? (
-            /* Welcome / Empty State */
-            <div className="flex min-h-[58vh] flex-col items-center justify-center text-center px-4">
-              <div className="relative mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-xl shadow-emerald-500/20">
-                <Sparkles className="h-8 w-8" />
-                <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex h-4 w-4 rounded-full bg-emerald-500"></span>
-                </span>
+            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center px-4">
+              <div className="relative mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20">
+                <Sparkles className="h-7 w-7" />
               </div>
 
               <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
                 เริ่มต้นสนทนากับ AI
               </h2>
-              <p className="mt-2.5 max-w-lg text-sm text-slate-500 leading-relaxed">
-                ประมวลผลคำสั่งด้วย {activeModelInfo.modelName} บนเครื่องของคุณโดยตรง ปลอดภัย รวดเร็ว และเป็นส่วนตัว
+              <p className="mt-2 max-w-md text-xs sm:text-sm text-slate-500 leading-relaxed">
+                โมเดล On-Device ประมวลผลบนเครื่องของคุณโดยตรง (Prompt API) ปลอดภัย รวดเร็ว และเป็นส่วนตัว 100%
               </p>
 
-              {/* Prompt Starter Pills */}
-              <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2 text-left">
+              {/* Prompt Starter Cards */}
+              <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-2.5 sm:grid-cols-2 text-left">
                 {QUICK_PROMPTS.map((item, index) => {
                   const Icon = item.icon;
                   return (
                     <button
                       key={index}
                       onClick={() => handleSend(item.prompt)}
-                      className="group flex flex-col rounded-2xl border border-slate-200/80 bg-white/80 backdrop-blur-xs p-4 shadow-2xs transition-all duration-200 hover:border-emerald-300 hover:bg-emerald-50/20 hover:shadow-md hover:shadow-emerald-500/5 hover:-translate-y-0.5 cursor-pointer"
+                      className="group flex flex-col rounded-2xl border border-slate-200/90 bg-white/90 backdrop-blur-xs p-3.5 shadow-2xs transition-all duration-200 hover:border-emerald-300 hover:bg-emerald-50/30 hover:shadow-md hover:shadow-emerald-500/5 hover:-translate-y-0.5 cursor-pointer"
                     >
-                      <div className="flex items-center gap-2.5 font-semibold text-slate-800 text-sm group-hover:text-emerald-700 transition-colors">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors shadow-2xs">
+                      <div className="flex items-center gap-2 font-semibold text-slate-800 text-xs sm:text-sm group-hover:text-emerald-700 transition-colors">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors shadow-2xs shrink-0">
                           <Icon className="h-4 w-4" />
                         </div>
-                        <span>{item.title}</span>
+                        <span className="truncate">{item.title}</span>
                       </div>
-                      <p className="mt-2 line-clamp-2 text-xs text-slate-500 leading-relaxed">
+                      <p className="mt-1.5 line-clamp-2 text-xs text-slate-500 leading-relaxed group-hover:text-slate-600">
                         {item.prompt}
                       </p>
                     </button>
@@ -1310,6 +1406,7 @@ const AIPromptPage: React.FC = () => {
         )}
       </main>
 
+<<<<<<< Updated upstream
       {/* Input Form Footer */}
       <footer className="border-t border-slate-200/80 bg-white p-3 sm:p-4">
         <div className="mx-auto max-w-4xl space-y-2">
@@ -1370,54 +1467,76 @@ const AIPromptPage: React.FC = () => {
           </div>
 
           {/* Warning / Action Banner when Context is Full or Near-Full (>= 88% or tokensLeft <= 800) */}
+=======
+      {/* Floating Bottom Input Area */}
+      <footer className="relative bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent pt-2 pb-3.5 px-3 sm:px-6 shrink-0">
+        <div className="mx-auto max-w-3xl sm:max-w-4xl space-y-2">
+          {/* Critical Context Warning (Only appears when context is near-full >= 88% or tokensLeft <= 800) */}
+>>>>>>> Stashed changes
           {(contextPercentage >= 88 || tokensLeft <= 800) && messages.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-rose-200 bg-rose-50/95 p-2.5 text-xs text-rose-900 shadow-2xs animate-in fade-in duration-150">
+            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-2xl bg-amber-50/95 border border-amber-200/90 px-3.5 py-2 text-xs text-amber-900 shadow-sm shadow-amber-500/5 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
               <div className="flex items-center gap-2 min-w-0">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
-                <span className="text-xs leading-relaxed">
-                  <strong>บริบทความจำใกล้เต็ม ({tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T)</strong>:
-                  {' '}คุณสามารถเลือกบีบอัดประวัติเดิม หรือเปิดห้องแชทใหม่ได้
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                <span className="font-semibold text-amber-900">บริบทความจำใกล้เต็ม:</span>
+                <span className="text-amber-800 font-medium">
+                  {tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T ({contextPercentage}%) • เหลือ {tokensLeft.toLocaleString()} Tokens
                 </span>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                 <button
                   type="button"
                   onClick={() => handleCompressChatContext()}
                   disabled={isCompressingContext}
-                  className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1 text-xs font-bold text-white shadow-2xs hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition cursor-pointer"
+                  className="flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 text-[11px] font-semibold shadow-2xs transition disabled:opacity-50 cursor-pointer"
                   title="บีบอัดประวัติเดิมลงในหน่วยความจำเพื่อลดการใช้ Tokens"
                 >
-                  <Layers className="h-3.5 w-3.5" />
+                  <Layers className="h-3 w-3" />
                   <span>{isCompressingContext ? 'กำลังบีบอัด...' : 'บีบอัดประวัติ'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleNewChat}
-                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-800 shadow-2xs hover:bg-rose-100 active:scale-95 transition cursor-pointer"
-                  title="เริ่มการสนทนาใหม่ (ประวัติเดิมจะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)"
+                  className="flex items-center gap-1 rounded-lg border border-slate-300 hover:bg-slate-100 active:scale-95 text-slate-700 bg-white px-2.5 py-1 text-[11px] font-medium shadow-2xs transition cursor-pointer"
+                  title="เริ่มการสนทนาใหม่"
                 >
+<<<<<<< Updated upstream
                   <Plus className="h-3.5 w-3.5 text-rose-600" />
                   <span>ขึ้นแชทใหม่</span>
+=======
+                  <Plus className="h-3 w-3 text-slate-500" />
+                  <span>เริ่มแชทใหม่</span>
+>>>>>>> Stashed changes
                 </button>
               </div>
             </div>
           )}
 
-          {/* Textarea Input Container */}
+          {/* Real-time Profanity Detection Warning */}
+          {currentInputProfanity && (
+            <div className="flex items-center gap-2 rounded-2xl border border-amber-300 bg-amber-50/95 px-3.5 py-2 text-xs text-amber-900 shadow-2xs animate-in fade-in duration-150">
+              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+              <div className="flex-1 min-w-0">
+                <span className="font-semibold">ตรวจพบคำไม่สุภาพ:</span>
+                {' '}มีถ้อยคำที่ไม่เหมาะสม (<code>{currentInputProfanity.matches.slice(0, 3).join(', ')}</code>) ระบบจะปฏิเสธการประมวลผลหากกดส่ง
+              </div>
+            </div>
+          )}
+
+          {/* Floating Glass Input Island */}
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`relative rounded-2xl border transition-all duration-200 p-2 sm:p-2.5 shadow-sm ${
+            className={`relative rounded-3xl border bg-white/95 backdrop-blur-xl transition-all duration-200 p-2.5 sm:p-3 shadow-[0_4px_24px_rgba(0,0,0,0.06)] ${
               isDragging
-                ? 'border-emerald-500 bg-emerald-50/50 ring-4 ring-emerald-500/20 shadow-md'
-                : 'border-slate-300/80 bg-white shadow-slate-200/50 focus-within:border-emerald-500 focus-within:ring-3 focus-within:ring-emerald-500/15 focus-within:shadow-md'
+                ? 'border-emerald-500 bg-emerald-50/60 ring-4 ring-emerald-500/20 shadow-lg'
+                : 'border-slate-200/90 hover:border-slate-300 focus-within:border-emerald-500/70 focus-within:shadow-[0_8px_30px_rgba(16,185,129,0.12)] focus-within:ring-4 focus-within:ring-emerald-500/10'
             }`}
           >
             {/* Attached Image Preview bar */}
             {selectedImage && (
-              <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-emerald-200/90 bg-emerald-50/70 p-2 animate-in fade-in duration-150">
-                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-emerald-200 bg-white shadow-2xs">
+              <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-emerald-200/90 bg-emerald-50/70 p-2 animate-in fade-in duration-150">
+                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-2xs">
                   <img
                     src={selectedImage.url}
                     alt={selectedImage.name}
@@ -1429,7 +1548,7 @@ const AIPromptPage: React.FC = () => {
                     {selectedImage.name}
                   </p>
                   <p className="text-[11px] text-slate-500">
-                    {(selectedImage.size / 1024).toFixed(1)} KB • รองรับ Multimodal (Vision)
+                    {(selectedImage.size / 1024).toFixed(1)} KB • Vision Multimodal
                   </p>
                 </div>
                 <button
@@ -1445,7 +1564,7 @@ const AIPromptPage: React.FC = () => {
 
             {/* Active Speech Recognition Banner */}
             {isListening && (
-              <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-rose-200/90 bg-rose-50/90 p-2 text-xs text-rose-800 animate-in fade-in duration-150">
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl border border-rose-200/90 bg-rose-50/90 p-2 text-xs text-rose-800 animate-in fade-in duration-150">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span className="flex h-3 w-3 relative shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
@@ -1458,7 +1577,6 @@ const AIPromptPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Language switch button */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1478,7 +1596,7 @@ const AIPromptPage: React.FC = () => {
                       className="hidden sm:inline-block rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300/80 px-1.5 py-0.5 text-[10px] font-medium"
                       title="ประมวลผลเสียงภาษาอังกฤษบนเครื่อง On-Device ด้วย Small Expert Model"
                     >
-                      On-Device Model
+                      On-Device
                     </span>
                   )}
 
@@ -1503,23 +1621,24 @@ const AIPromptPage: React.FC = () => {
               onChange={handleFileSelect}
             />
 
-            <div className="flex items-end gap-2">
-              {/* Textarea */}
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={inputMessage}
-                autoFocus
-                onChange={handleInput}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder="พิมพ์ข้อความของคุณที่นี่... (Enter เพื่อส่ง, แนบรูป หรือ Ctrl+V เพื่อวางรูป, กด 🎙️ เพื่อพูด)"
-                className="max-h-40 min-h-10 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
-              />
+            {/* Textarea Input */}
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={inputMessage}
+              autoFocus
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder="พิมพ์ข้อความของคุณที่นี่... (กด Shift+Enter ขึ้นบรรทัดใหม่)"
+              className="max-h-40 min-h-11 w-full resize-none border-0 bg-transparent px-3 py-1.5 text-sm sm:text-[14.5px] text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
+            />
 
-              {/* Action Buttons */}
-              <div className="flex shrink-0 items-center gap-1.5 pb-0.5">
-                {/* Voice Input (Speech-to-Text) Button */}
+            {/* Bottom Inner Toolbar */}
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100/80 mt-1 px-1">
+              {/* Left Action Buttons & Subtle Token Indicator */}
+              <div className="flex items-center gap-1.5">
+                {/* Voice Input Button */}
                 <button
                   type="button"
                   onClick={handleToggleListening}
@@ -1531,37 +1650,84 @@ const AIPromptPage: React.FC = () => {
                       ? 'กำลังฟังเสียง... (คลิกเพื่อหยุด)'
                       : `พิมพ์ด้วยเสียง (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
                   }
-                  className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
                     isListening
-                      ? 'border-rose-500 bg-rose-500 text-white shadow-sm ring-2 ring-rose-400/40 animate-pulse'
-                      : 'border-slate-200 bg-white text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/40 hover:text-emerald-700'
+                      ? 'border border-rose-500 bg-rose-500 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
+                      : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </button>
 
+                {/* Image Attach Button */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isGenerating}
                   title="แนบรูปภาพ (หรือกด Ctrl+V เพื่อวางรูป)"
-                  className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
                     selectedImage
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
-                      : 'border-slate-200 bg-white text-slate-500 hover:border-emerald-300 hover:bg-emerald-50/40 hover:text-emerald-700'
+                      ? 'border border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
+                      : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <ImageIcon className="h-4 w-4" />
                 </button>
+
+                <div className="h-3.5 w-px bg-slate-200/80 mx-0.5 hidden sm:block" />
+
+                {/* Subtle Token Usage Badge */}
+                <div
+                  className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium px-2 py-0.5 rounded-full hover:bg-slate-100/70 transition cursor-default select-none"
+                  title={`การใช้หน่วยความจำบริบท: ${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens (${contextPercentage}%) • คงเหลือ ${tokensLeft.toLocaleString()} Tokens`}
+                >
+                  <Gauge className="h-3 w-3 text-emerald-600 shrink-0" />
+                  <span className="hidden sm:inline">{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold ${
+                      contextPercentage >= 88
+                        ? 'bg-rose-100 text-rose-700'
+                        : contextPercentage >= 70
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {contextPercentage}%
+                  </span>
+
+                  {isCompressingContext ? (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 animate-pulse">
+                      <RefreshCw className="h-2.5 w-2.5 animate-spin text-emerald-600" />
+                      บีบอัด...
+                    </span>
+                  ) : isGenerating ? (
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                      </span>
+                      <span>AI คิดอยู่...</span>
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Right: Character count + Send/Stop Button */}
+              <div className="flex items-center gap-2">
+                {inputMessage.length > 0 && (
+                  <span className="hidden sm:inline text-[11px] text-slate-400 font-mono">
+                    {inputMessage.length}
+                  </span>
+                )}
 
                 {isGenerating ? (
                   <button
                     type="button"
                     onClick={handleStop}
                     title="หยุดการสร้างข้อความ"
-                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs hover:bg-rose-600 active:scale-95 transition cursor-pointer"
+                    className="flex h-8.5 w-8.5 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs hover:bg-rose-600 active:scale-95 transition cursor-pointer"
                   >
-                    <Square className="h-4 w-4 fill-white" />
+                    <Square className="h-3.5 w-3.5 fill-white" />
                   </button>
                 ) : (
                   <button
@@ -1569,15 +1735,16 @@ const AIPromptPage: React.FC = () => {
                     onClick={() => handleSend()}
                     disabled={!inputMessage.trim() && !selectedImage}
                     title="ส่งข้อความ"
-                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-30 disabled:hover:bg-emerald-600 disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed"
+                    className="flex h-8.5 w-8.5 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-25 disabled:hover:bg-emerald-600 disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed"
                   >
-                    <Send className="h-4 w-4" />
+                    <Send className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
             </div>
           </div>
 
+<<<<<<< Updated upstream
           <div className="mt-1 flex items-center justify-between px-1 text-[11px] text-slate-400">
             <span>Powered by Chrome Built-in AI / Prompt API (Multimodal)</span>
             <div className="flex items-center gap-2">
@@ -1586,6 +1753,11 @@ const AIPromptPage: React.FC = () => {
               </span>
               <span>{inputMessage.length > 0 ? `${inputMessage.length} ตัวอักษร` : ''}</span>
             </div>
+=======
+          {/* Micro Footer Caption */}
+          <div className="text-center text-[11px] text-slate-400/80 px-2 select-none">
+            Google Chrome Built-in AI (Prompt API) • ประมวลผลบนเครื่อง (On-Device) ปลอดภัยและเป็นส่วนตัว 100%
+>>>>>>> Stashed changes
           </div>
         </div>
       </footer>
@@ -1616,6 +1788,11 @@ const AIPromptPage: React.FC = () => {
         conversationChars={conversationChars}
         onOpenPolicy={() => setIsPolicyModalOpen(true)}
         activeModelName={activeModelInfo.modelName}
+        isProfanityFilterEnabled={isProfanityFilterActive}
+        setIsProfanityFilterEnabled={(enabled) => {
+          setIsProfanityFilterActive(enabled);
+          setProfanityFilterEnabled(enabled);
+        }}
       />
 
       {/* Summary Modal */}

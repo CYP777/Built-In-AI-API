@@ -1,7 +1,13 @@
 import AIPromptPage from './pages/ai-prompt';
+import { DeviceGuard } from './components/DeviceGuard';
 
 function App() {
-  return <AIPromptPage />;
+  return (
+    <DeviceGuard>
+      <AIPromptPage />
+    </DeviceGuard>
+  );
 }
 
 export default App;
+

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { X, Sliders, HelpCircle } from 'lucide-react';
+import { X, Sliders, HelpCircle, ShieldAlert } from 'lucide-react';
 import { estimateTokens } from '../services/ai-service';
 import { SteppedRangeSlider } from './SteppedRangeSlider';
 
@@ -17,6 +17,8 @@ export interface SettingsModalProps {
   conversationChars?: number;
   onOpenPolicy?: () => void;
   activeModelName?: string;
+  isProfanityFilterEnabled?: boolean;
+  setIsProfanityFilterEnabled?: (enabled: boolean) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -30,6 +32,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   setTopK,
   onSaveAndReset,
   activeModelName,
+  isProfanityFilterEnabled = true,
+  setIsProfanityFilterEnabled,
 }) => {
   // Live Token calculations for System Prompt
   const systemPromptTokens = useMemo(() => {
@@ -122,6 +126,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             maxLabel="50 (พิจารณาคำศัพท์หลากหลาย)"
             description="จำกัดจำนวนคำที่เป็นไปได้ที่โมเดลจะพิจารณา (สำหรับ Chrome 154+ แนะนำค่า Top-K: 1 และ Temperature: 0 เพื่อรองรับระบบ MTP)"
           />
+
+          {/* Profanity & Safety Filter Toggle */}
+          <div className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200/90 bg-slate-50/60 hover:bg-slate-50 transition">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                <ShieldAlert className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs sm:text-sm">
+                  <span>ตัวกรองและตรวจจับคำหยาบคาย (Profanity Filter)</span>
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                    แนะนำ
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                  ตรวจจับคำหยาบ ถ้อยคำรุนแรง และปฏิเสธการประมวลผลอย่างสุภาพตามนโยบายความปลอดภัย AI (Pillar 2)
+                </p>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
+              <input
+                type="checkbox"
+                checked={isProfanityFilterEnabled}
+                onChange={(e) => setIsProfanityFilterEnabled?.(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
 
           {/* Built-in AI Guide Box */}
           <div className="rounded-xl bg-slate-50 border border-slate-200/80 p-4 space-y-2 text-xs text-slate-600">

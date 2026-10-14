@@ -128,13 +128,17 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             </span>
           </div>
           <p className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
+<<<<<<< Updated upstream
             แชทบอทประมวลผลด้วยโมเดล On-Device ภายในเครื่อง (Prompt API)
+=======
+            โมเดล On-Device (CPU/GPU) บน Notebook &amp; Laptop
+>>>>>>> Stashed changes
           </p>
         </div>
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-2 sm:gap-2.5">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {/* Built-in AI Status Badge & Re-check Status button */}
         <div className="flex items-center gap-1">
           <div className="hidden sm:block">
@@ -157,10 +161,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             type="button"
             onClick={onOpenPolicy}
             title="ดูข้อตกลงและนโยบายความปลอดภัย AI"
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition active:scale-95"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition active:scale-95 cursor-pointer"
           >
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-            <span className="hidden sm:inline">นโยบาย AI</span>
+            <span className="hidden md:inline">นโยบาย AI</span>
           </button>
         )}
 
@@ -169,10 +173,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           type="button"
           onClick={onOpenSettings}
           title="ตั้งค่าโมเดล"
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition active:scale-95"
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition active:scale-95 cursor-pointer"
         >
           <Sliders className="h-3.5 w-3.5 text-slate-500" />
-          <span className="hidden sm:inline">ตั้งค่า</span>
+          <span className="hidden md:inline">ตั้งค่า</span>
         </button>
 
         {/* Summarize Chat button */}
@@ -182,9 +186,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             onClick={onOpenSummary}
             disabled={messagesCount === 0}
             title={messagesCount === 0 ? 'ยังไม่มีข้อความสำหรับการสรุป' : 'สรุปเนื้อหาบทสนทนา (Summarizer API)'}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:border-teal-300 hover:bg-teal-50/70 hover:text-teal-700 disabled:opacity-40 disabled:hover:bg-white/70 disabled:hover:text-slate-700 disabled:hover:border-slate-200/80 transition active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-200/90 bg-emerald-50/70 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-2xs hover:border-emerald-300 hover:bg-emerald-100/80 transition active:scale-95 cursor-pointer disabled:opacity-40 disabled:hover:bg-emerald-50/70 disabled:hover:text-emerald-800 disabled:hover:border-emerald-200/90 disabled:cursor-not-allowed"
           >
-            <FileText className="h-3.5 w-3.5 text-teal-600" />
+            <FileText className="h-3.5 w-3.5 text-emerald-600" />
             <span className="hidden sm:inline">สรุปแชท</span>
           </button>
         )}
