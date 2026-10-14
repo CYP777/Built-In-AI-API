@@ -432,6 +432,21 @@ class AIService {
             ];
           }
 
+          const promptWithTimeout = async (payload: AIPromptInput, timeoutMs = 40000): Promise<string> => {
+            let timerId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timerId = setTimeout(() => reject(new Error('Prompt call timed out')), timeoutMs);
+            });
+            try {
+              return await Promise.race([
+                sessionToUse.prompt(payload, { signal }),
+                timeoutPromise,
+              ]);
+            } finally {
+              if (timerId) clearTimeout(timerId);
+            }
+          };
+
           if (typeof sessionToUse.promptStreaming === 'function') {
             try {
               let stream: ReadableStream<string>;
@@ -452,30 +467,7 @@ class AIService {
                 }
               }
 
-              let accumulated = '';
-              for await (const chunk of stream as unknown as AsyncIterable<string>) {
-                if (signal?.aborted) break;
-
-                // Handle both cumulative stream (Chrome Built-in AI default) and delta stream
-                if (typeof chunk === 'string') {
-                  if (chunk.startsWith(accumulated)) {
-                    accumulated = chunk; // Cumulative chunk
-                  } else {
-                    accumulated += chunk; // Delta chunk
-                  }
-                }
-
-                // Detect and cut off repetition loop immediately (ดักลูปตัวอักษรซ้ำ เช่น งงงงงงง)
-                const loopCheck = detectRepetitionLoop(accumulated);
-                if (loopCheck.hasLoop) {
-                  accumulated = loopCheck.cleanedText;
-                  onChunk(accumulated);
-                  break; // Cut off the stream immediately!
-                }
-
-                onChunk(accumulated);
-              }
-              return accumulated;
+              return await consumePromptStream(stream, onChunk, signal);
             } catch (streamErr) {
               if (signal?.aborted) throw streamErr;
               const msg = String((streamErr as Error)?.message || '').toLowerCase();
@@ -492,17 +484,17 @@ class AIService {
                 throw streamErr;
               }
 
-              console.warn('promptStreaming error, falling back to prompt():', streamErr);
+              console.warn('promptStreaming error or timeout, falling back to prompt():', streamErr);
               let rawAnswer: string;
               try {
-                rawAnswer = await sessionToUse.prompt(promptPayload, { signal });
+                rawAnswer = await promptWithTimeout(promptPayload);
               } catch {
                 if (imageFile) {
                   const flatParts: Array<AIMultimodalPart> = [
                     { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
                     { type: 'image', value: imagePayloadValue },
                   ];
-                  rawAnswer = await sessionToUse.prompt(flatParts, { signal });
+                  rawAnswer = await promptWithTimeout(flatParts);
                 } else {
                   throw streamErr;
                 }
@@ -516,14 +508,14 @@ class AIService {
           } else {
             let rawAnswer: string;
             try {
-              rawAnswer = await sessionToUse.prompt(promptPayload, { signal });
+              rawAnswer = await promptWithTimeout(promptPayload);
             } catch {
               if (imageFile) {
                 const flatParts: Array<AIMultimodalPart> = [
                   { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
                   { type: 'image', value: imageFile },
                 ];
-                rawAnswer = await sessionToUse.prompt(flatParts, { signal });
+                rawAnswer = await promptWithTimeout(flatParts);
               } else {
                 throw new Error('Prompt failed');
               }
@@ -565,7 +557,19 @@ class AIService {
           console.warn('Prompt error, attempting recreation...', err);
           await this.initSession();
           if (this.session) {
-            const rawAnswer = await this.session.prompt(effectivePromptText, { signal });
+            let timerId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timerId = setTimeout(() => reject(new Error('Prompt recreation call timed out')), 40000);
+            });
+            let rawAnswer: string;
+            try {
+              rawAnswer = await Promise.race([
+                this.session.prompt(effectivePromptText, { signal }),
+                timeoutPromise,
+              ]);
+            } finally {
+              if (timerId) clearTimeout(timerId);
+            }
             const loopCheck = detectRepetitionLoop(rawAnswer);
             const answer = loopCheck.hasLoop ? loopCheck.cleanedText : rawAnswer;
             onChunk(answer);
@@ -868,6 +872,140 @@ export function detectRepetitionLoop(text: string): { hasLoop: boolean; cleanedT
   }
 
   return { hasLoop: false, cleanedText: text };
+}
+
+export interface ConsumeStreamOptions {
+  firstChunkTimeoutMs?: number;
+  idleChunkTimeoutMs?: number;
+  postProcess?: (text: string) => string;
+}
+
+/**
+ * Safely read a ReadableStream<string> from Chrome's Prompt/Summarizer API with:
+ * 1. Initial response timeout (Prefill timeout: default 35s)
+ * 2. Inactivity watchdog (Idle stream timeout: default 2.5s once text has started streaming)
+ * 3. Duplicate/empty chunk guard (detects stagnant stream without new text)
+ * 4. Automatic reader cancellation and lock release on completion, loop, abort, or timeout
+ */
+export async function consumePromptStream(
+  stream: ReadableStream<string>,
+  onChunk: (accumulated: string) => void,
+  signal?: AbortSignal,
+  options?: ConsumeStreamOptions
+): Promise<string> {
+  const FIRST_CHUNK_TIMEOUT_MS = options?.firstChunkTimeoutMs ?? 35000;
+  const IDLE_CHUNK_TIMEOUT_MS = options?.idleChunkTimeoutMs ?? 2500;
+  const postProcess = options?.postProcess ?? ((t: string) => t);
+
+  const reader = stream.getReader();
+  let accumulated = '';
+  let streamFinished = false;
+  let lastGrowthTime = Date.now();
+
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<{ isAborted: true }>((resolve) => {
+    if (signal?.aborted) {
+      resolve({ isAborted: true });
+      return;
+    }
+    if (signal) {
+      onAbort = () => resolve({ isAborted: true });
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+
+  try {
+    while (!streamFinished) {
+      if (signal?.aborted) break;
+
+      const hasStarted = accumulated.length > 0;
+      let timeoutMs: number;
+      if (!hasStarted) {
+        timeoutMs = FIRST_CHUNK_TIMEOUT_MS;
+      } else {
+        const elapsedSinceGrowth = Date.now() - lastGrowthTime;
+        timeoutMs = Math.max(200, IDLE_CHUNK_TIMEOUT_MS - elapsedSinceGrowth);
+      }
+
+      let timerId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+        timerId = setTimeout(() => resolve({ isTimeout: true }), timeoutMs);
+      });
+
+      let readResult: { done?: boolean; value?: string; isTimeout?: boolean; isAborted?: boolean };
+      try {
+        readResult = await Promise.race([
+          reader.read(),
+          timeoutPromise,
+          abortPromise,
+        ]);
+      } finally {
+        if (timerId) clearTimeout(timerId);
+      }
+
+      if (readResult.isAborted) {
+        break;
+      }
+
+      if (readResult.isTimeout) {
+        if (accumulated.length > 0) {
+          console.info('Prompt stream idle timeout reached after generation; concluding stream cleanly.');
+          break;
+        } else {
+          throw new Error('Prompt stream timed out waiting for initial response');
+        }
+      }
+
+      const { done, value } = readResult;
+      if (done) {
+        streamFinished = true;
+        break;
+      }
+
+      const prevLen = accumulated.length;
+      if (typeof value === 'string') {
+        if (value.startsWith(accumulated)) {
+          accumulated = value; // Cumulative chunk
+        } else {
+          accumulated += value; // Delta chunk
+        }
+      }
+
+      if (accumulated.length > prevLen) {
+        lastGrowthTime = Date.now();
+      } else if (hasStarted && Date.now() - lastGrowthTime >= IDLE_CHUNK_TIMEOUT_MS) {
+        console.info('Prompt stream stagnant without new text; concluding stream.');
+        break;
+      }
+
+      // Detect and cut off repetition loop immediately (ดักลูปตัวอักษรซ้ำ เช่น งงงงงงง)
+      const loopCheck = detectRepetitionLoop(accumulated);
+      if (loopCheck.hasLoop) {
+        accumulated = loopCheck.cleanedText;
+        onChunk(postProcess(accumulated));
+        break;
+      }
+
+      onChunk(postProcess(accumulated));
+    }
+  } finally {
+    if (signal && onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
+  }
+
+  const finalResult = postProcess(accumulated);
+  return finalResult;
 }
 
 export const aiService = new AIService();

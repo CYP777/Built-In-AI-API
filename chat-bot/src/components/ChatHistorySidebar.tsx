@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   History,
-  Plus,
+  SquarePen,
   Search,
   X,
   MessageSquare,
@@ -9,7 +9,9 @@ import {
   Trash2,
   Check,
   PanelLeftClose,
+  PanelLeft,
   AlertTriangle,
+  Clock,
 } from 'lucide-react';
 import type { ChatSession } from '../types/chat-history';
 import {
@@ -27,6 +29,7 @@ interface ChatHistorySidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, newTitle: string) => void;
   onClearAllSessions: () => void;
+  onTogglePin?: () => void;
 }
 
 export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
@@ -39,6 +42,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
   onDeleteSession,
   onRenameSession,
   onClearAllSessions,
+  onTogglePin,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,6 +52,24 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Target session selected for deletion
+  const targetSession = useMemo(() => {
+    if (!sessionToDeleteId) return null;
+    return sessions.find((s) => s.id === sessionToDeleteId) || null;
+  }, [sessions, sessionToDeleteId]);
+
+  // Close delete modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (sessionToDeleteId) setSessionToDeleteId(null);
+        if (showClearConfirm) setShowClearConfirm(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sessionToDeleteId, showClearConfirm]);
 
   // Expanded state: true if pinned (isOpen) OR hovered
   const isExpanded = isOpen || isHovered;
@@ -150,8 +172,6 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => {
           setIsHovered(false);
-          setShowClearConfirm(false);
-          setSessionToDeleteId(null);
         }}
         className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200/80 bg-white/95 text-slate-800 backdrop-blur-md transition-all duration-300 ease-in-out ${
           isOpen
@@ -162,24 +182,42 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         }`}
       >
         {!isExpanded ? (
-          /* ============================================================ */
-          /* SLIM ICON RAIL (โหมดไอคอนย่อแบบ Instagram)                    */
-          /* ============================================================ */
-          <div className="hidden md:flex h-full w-16 flex-col items-center justify-center gap-2.5 py-4 select-none">
+          <div className="hidden md:flex h-full w-16 flex-col items-center justify-start gap-2.5 py-3.5 select-none">
+            {/* Pin/Toggle Sidebar Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onTogglePin) {
+                  onTogglePin();
+                } else {
+                  setIsHovered(true);
+                }
+              }}
+              title={isOpen ? 'พับเก็บแถบประวัติ' : 'เปิดและปักหมุดแถบประวัติ'}
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-emerald-700 active:scale-95 transition-all cursor-pointer"
+            >
+              <PanelLeft className="h-4.5 w-4.5" />
+            </button>
+
+            <div className="w-8 h-px bg-slate-200/70 my-0.5" />
+
             {/* New Chat Icon Button */}
             <button
               type="button"
               onClick={onNewChat}
               title="เริ่มบทสนทนาใหม่"
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs hover:shadow-emerald-600/20 active:scale-95 transition-all cursor-pointer"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-2xs hover:bg-emerald-700 active:scale-95 transition-all cursor-pointer"
             >
-              <Plus className="h-5 w-5" />
+              <SquarePen className="h-4.5 w-4.5" />
             </button>
 
             {/* History Icon Button */}
             <button
               type="button"
-              onClick={() => setIsHovered(true)}
+              onClick={() => {
+                if (onTogglePin) onTogglePin();
+                else setIsHovered(true);
+              }}
               title={`ดูประวัติการแชททั้งหมด (${sessions.length} รายการ)`}
               className="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition cursor-pointer"
             >
@@ -195,6 +233,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
             <button
               type="button"
               onClick={() => {
+                if (onTogglePin) onTogglePin();
                 setIsHovered(true);
                 setTimeout(() => searchInputRef.current?.focus(), 150);
               }}
@@ -203,27 +242,20 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
             >
               <Search className="h-4.5 w-4.5" />
             </button>
-
           </div>
         ) : (
-          /* ============================================================ */
-          /* EXPANDED SIDEBAR (โหมดกางออกเต็มความกว้าง แสดงรายละเอียดครบถ้วน) */
-          /* ============================================================ */
           <div className="flex h-full w-72 sm:w-80 flex-col animate-in fade-in duration-150">
             {/* Header */}
-            <div className="flex h-16 items-center justify-between border-b border-slate-200/80 px-4">
-              <div className="flex items-center gap-2.5 font-bold text-slate-800">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200/60 shadow-2xs">
-                  <History className="h-4 w-4" />
-                </div>
-                <span className="text-sm tracking-tight">ประวัติการแชท</span>
+            <div className="flex h-16 items-center justify-between px-4 border-b border-slate-100">
+              <div className="flex items-center gap-2 font-bold text-slate-800">
+                <History className="h-4.5 w-4.5 text-emerald-600" />
+                <h2 className="text-sm font-bold text-slate-800">ประวัติการแชท</h2>
                 {sessions.length > 0 && (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
                     {sessions.length}
                   </span>
                 )}
               </div>
-
               <div className="flex items-center gap-1">
                 {/* Close / Collapse button */}
                 <button
@@ -252,7 +284,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 }}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:scale-98 transition-all cursor-pointer"
               >
-                <Plus className="h-4 w-4" />
+                <SquarePen className="h-4 w-4" />
                 <span>เริ่มบทสนทนาใหม่</span>
               </button>
 
@@ -304,13 +336,12 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     {sessionList.map((session) => {
                       const isActive = session.id === currentSessionId;
                       const isEditing = session.id === editingSessionId;
-                      const isDeleting = session.id === sessionToDeleteId;
 
                       return (
                         <div
                           key={session.id}
                           onClick={() => {
-                            if (!isEditing && !isDeleting) {
+                            if (!isEditing) {
                               onSelectSession(session);
                               if (window.innerWidth < 768) {
                                 onClose();
@@ -343,7 +374,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                               <button
                                 type="button"
                                 onClick={(e) => handleSaveRename(session.id, e)}
-                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
                                 title="บันทึก"
                               >
                                 <Check className="h-3 w-3" />
@@ -351,135 +382,235 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                               <button
                                 type="button"
                                 onClick={handleCancelRename}
-                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-200 text-slate-600 hover:bg-slate-300"
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-200 text-slate-600 hover:bg-slate-300 cursor-pointer"
                                 title="ยกเลิก"
                               >
                                 <X className="h-3 w-3" />
                               </button>
                             </div>
-                          ) : isDeleting ? (
-                            <div
-                              className="flex flex-1 items-center justify-between gap-1 text-[11px] text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span className="font-semibold">ลบแชทนี้?</span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                type="button"
-                                onClick={(e) => handleConfirmDelete(session.id, e)}
-                                className="rounded bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-rose-700"
-                              >
-                                ยืนยัน
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleCancelDelete}
-                                className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-700 hover:bg-slate-300"
-                              >
-                                ไม่ลบ
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="flex min-w-0 flex-1 items-center gap-2">
-                              <MessageSquare
-                                className={`h-3.5 w-3.5 shrink-0 ${
-                                  isActive ? 'text-emerald-600' : 'text-slate-400'
-                                }`}
-                              />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate font-medium leading-tight">
-                                  {session.title || 'บทสนทนาไม่มีชื่อ'}
-                                </p>
-                                <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400">
-                                  <span>{formatSessionTime(session.updatedAt)}</span>
-                                  <span>•</span>
-                                  <span>{session.messages.length} ข้อความ</span>
-                                </p>
+                          ) : (
+                            <>
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <MessageSquare
+                                  className={`h-3.5 w-3.5 shrink-0 ${
+                                    isActive ? 'text-emerald-600' : 'text-slate-400'
+                                  }`}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium leading-tight">
+                                    {session.title || 'บทสนทนาไม่มีชื่อ'}
+                                  </p>
+                                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400">
+                                    <span>{formatSessionTime(session.updatedAt)}</span>
+                                    <span>•</span>
+                                    <span>{session.messages.length} ข้อความ</span>
+                                  </p>
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Action Buttons (Visible on hover or active) */}
-                            <div
-                              className={`flex items-center gap-1 shrink-0 ${
-                                isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                              } transition-opacity`}
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => handleStartRename(session, e)}
-                                title="เปลี่ยนชื่อหัวข้อ"
-                                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-emerald-600 shadow-2xs transition"
+                              {/* Action Buttons (Visible on hover or active) */}
+                              <div
+                                className={`flex items-center gap-1 shrink-0 ${
+                                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                } transition-opacity`}
                               >
-                                <Edit2 className="h-3 w-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => handleDeleteClick(session.id, e)}
-                                title="ลบประวัตินี้"
-                                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-rose-600 shadow-2xs transition"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleStartRename(session, e)}
+                                  title="เปลี่ยนชื่อหัวข้อ"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-emerald-600 shadow-2xs transition cursor-pointer"
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteClick(session.id, e)}
+                                  title="ลบประวัตินี้"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-rose-600 shadow-2xs transition cursor-pointer"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
                 </div>
               ))
             )}
           </div>
 
-          {/* Footer: Clear All Confirmation / Button */}
+          {/* Footer: Clear All Button */}
           {sessions.length > 0 && (
             <div className="border-t border-slate-200/80 p-3 bg-slate-50/50">
-              {showClearConfirm ? (
-                <div className="rounded-xl border border-rose-200 bg-rose-50/90 p-2.5 text-xs text-rose-800 animate-in fade-in">
-                  <div className="flex items-center gap-1.5 font-bold text-rose-700">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    <span>ล้างประวัติทั้งหมด?</span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-rose-600 leading-tight">
-                    บทสนทนาทั้งหมดจะถูกลบถาวรและไม่สามารถกู้คืนได้
-                  </p>
-                  <div className="mt-2.5 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClearAllSessions();
-                        setShowClearConfirm(false);
-                      }}
-                      className="flex-1 rounded-lg bg-rose-600 py-1 text-center text-xs font-semibold text-white hover:bg-rose-700 transition"
-                    >
-                      ยืนยันลบทั้งหมด
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowClearConfirm(false)}
-                      className="rounded-lg bg-slate-200 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-300 transition"
-                    >
-                      ยกเลิก
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowClearConfirm(true)}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>ล้างประวัติการแชททั้งหมด</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowClearConfirm(true)}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>ล้างประวัติการแชททั้งหมด</span>
+              </button>
             </div>
           )}
         </div>
         )}
       </aside>
+
+      {/* ============================================================ */}
+      {/* CENTERED MODAL: Delete Single Chat Session                   */}
+      {/* ============================================================ */}
+      {targetSession && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={handleCancelDelete}
+        >
+          <div
+            className="relative w-full max-w-sm sm:max-w-md rounded-2xl bg-white p-5 sm:p-6 shadow-xl border border-slate-100 animate-in zoom-in-95 duration-150 text-slate-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={handleCancelDelete}
+              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+              title="ปิด"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="flex flex-col items-center text-center">
+              {/* Red Trash Icon Badge */}
+              <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-rose-50 border border-rose-100 text-rose-600 shadow-2xs mb-3">
+                <Trash2 className="h-5 w-5 sm:h-6 sm:w-6 stroke-[1.75]" />
+              </div>
+
+              {/* Title */}
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                ลบประวัติการสนทนา?
+              </h3>
+
+              <p className="mt-1 text-xs text-slate-500 max-w-xs leading-relaxed">
+                คุณแน่ใจหรือไม่ว่าต้องการลบห้องแชทนี้? ข้อมูลทั้งหมดจะถูกลบถาวรและไม่สามารถกู้คืนได้
+              </p>
+
+              {/* Chat Preview Card */}
+              <div className="mt-4 w-full rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-left">
+                <div className="flex items-start gap-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100/80 text-emerald-700 mt-0.5">
+                    <MessageSquare className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-semibold text-xs sm:text-sm text-slate-900 truncate leading-snug">
+                      {targetSession.title || 'บทสนทนาไม่มีชื่อ'}
+                    </h4>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-slate-400" />
+                        {formatSessionTime(targetSession.updatedAt)}
+                      </span>
+                      <span>•</span>
+                      <span>{targetSession.messages.length} ข้อความ</span>
+                    </div>
+                    {targetSession.messages.length > 0 && (
+                      <p className="mt-2 text-[11px] text-slate-500 line-clamp-2 bg-white rounded-md p-2 border border-slate-200/60 leading-relaxed italic">
+                        "{targetSession.messages[targetSession.messages.length - 1].text.substring(0, 100)}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="mt-5 flex w-full gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleCancelDelete}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleConfirmDelete(targetSession.id, e)}
+                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>ยืนยันลบแชท</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* CENTERED MODAL: Clear All Sessions                           */}
+      {/* ============================================================ */}
+      {showClearConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setShowClearConfirm(false)}
+        >
+          <div
+            className="relative w-full max-w-sm sm:max-w-md rounded-2xl bg-white p-5 sm:p-6 shadow-xl border border-slate-100 animate-in zoom-in-95 duration-150 text-slate-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={() => setShowClearConfirm(false)}
+              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+              title="ปิด"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="flex flex-col items-center text-center">
+              {/* Warning Icon Badge */}
+              <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-rose-50 border border-rose-100 text-rose-600 shadow-2xs mb-3">
+                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 stroke-[1.75]" />
+              </div>
+
+              {/* Title */}
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                ล้างประวัติการสนทนาทั้งหมด?
+              </h3>
+
+              <p className="mt-1 text-xs text-slate-500 max-w-xs leading-relaxed">
+                คุณกำลังจะลบประวัติการสนทนาทั้งหมดจำนวน{' '}
+                <span className="font-semibold text-rose-600">
+                  {sessions.length} ห้องแชท
+                </span>{' '}
+                ข้อมูลทั้งหมดจะถูกลบถาวรทันทีและไม่สามารถกู้คืนได้
+              </p>
+
+              {/* Action Buttons */}
+              <div className="mt-5 flex w-full gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowClearConfirm(false)}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClearAllSessions();
+                    setShowClearConfirm(false);
+                  }}
+                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>ลบทั้งหมด ({sessions.length})</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

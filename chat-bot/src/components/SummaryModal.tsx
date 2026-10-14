@@ -131,7 +131,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           setSummaryContent('เกิดข้อผิดพลาดในการสรุปเนื้อหา กรุณาลองใหม่อีกครั้ง');
         }
       } finally {
-        if (!isCancelled && !controller.signal.aborted) {
+        if (!isCancelled) {
           setIsLoading(false);
         }
       }
@@ -141,6 +141,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
       isCancelled = true;
       clearTimeout(timer);
       controller.abort();
+      setIsLoading(false);
     };
   }, [isOpen, summaryType, summaryLength, messages, regenerateCounter]);
 
@@ -177,7 +178,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
-                  สรุปการสนทนา (Summarizer API)
+                  สรุปการสนทนา
                 </h2>
                 {activeEngine === 'native' || (!activeEngine && engineState.isNative) ? (
                   <span className="flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
