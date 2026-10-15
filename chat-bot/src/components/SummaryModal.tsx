@@ -167,12 +167,12 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in">
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in">
       <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
@@ -278,12 +278,12 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
         {/* Content Body */}
         <div ref={contentContainerRef} className="flex-1 overflow-y-auto p-6 text-sm text-slate-700">
           {isLoading && !summaryContent ? (
-            <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 text-slate-400">
+            <div className="flex min-h-50 flex-col items-center justify-center gap-3 text-slate-400">
               <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
               <p className="text-xs font-medium text-slate-500">กำลังประมวลผลสรุปเนื้อหาด้วย On-Device AI...</p>
             </div>
           ) : (
-            <div className="relative min-h-[180px] rounded-xl bg-slate-50/70 p-4 border border-slate-200/60 leading-relaxed min-w-0 max-w-full break-words [overflow-wrap:anywhere] overflow-hidden">
+            <div className="relative min-h-45 rounded-xl bg-slate-50/70 p-4 border border-slate-200/60 leading-relaxed min-w-0 max-w-full wrap-break-word overflow-hidden">
               {summaryContent ? (
                 <Markdown
                   remarkPlugins={[remarkGfm]}
@@ -291,17 +291,17 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     h3: ({ children }) => (
                       <h3 className="text-sm font-bold text-slate-800 mt-2 mb-1.5">{children}</h3>
                     ),
-                    p: ({ children }) => <p className="mb-2 last:mb-0 break-words [overflow-wrap:anywhere]">{children}</p>,
+                    p: ({ children }) => <p className="mb-2 last:mb-0 wrap-break-word">{children}</p>,
                     ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-1 min-w-0">{children}</ul>,
                     ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-1 min-w-0">{children}</ol>,
-                    li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
+                    li: ({ children }) => <li className="wrap-break-word">{children}</li>,
                     strong: ({ children }) => <strong className="font-semibold text-slate-900">{children}</strong>,
                   }}
                 >
                   {summaryContent}
                 </Markdown>
               ) : (
-                <div className="flex min-h-[150px] flex-col items-center justify-center text-center p-4 text-slate-500">
+                <div className="flex min-h-37.5 flex-col items-center justify-center text-center p-4 text-slate-500">
                   <p className="font-semibold text-slate-700 mb-1">ยังไม่มีข้อมูลสรุป</p>
                   <p className="text-xs text-slate-500 max-w-sm">
                     ข้อความอาจสั้นเกินไปหรือไม่พบเนื้อหาสำคัญสำหรับการสรุปผล กรุณาลองกดปุ่ม "สร้างใหม่" หรือพิมพ์ข้อความเพิ่มเติม
@@ -382,7 +382,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   onClose();
                 }}
                 disabled={isCompressing || messages.length === 0 || uncompactedCount === 0}
-                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 active:scale-95 disabled:opacity-50 transition cursor-pointer disabled:cursor-not-allowed"
+                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl bg-linear-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 active:scale-95 disabled:opacity-50 transition cursor-pointer disabled:cursor-not-allowed"
               >
                 <span>
                   {isCompressing

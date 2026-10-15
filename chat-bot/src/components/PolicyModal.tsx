@@ -12,7 +12,6 @@ export interface PolicyModalProps {
   onAccept: () => void;
   onAppendToPrompt?: (shouldAppend: boolean) => void;
   isAppended?: boolean;
-  modelName?: string;
 }
 
 export const PolicyModal: React.FC<PolicyModalProps> = ({
@@ -21,7 +20,6 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
   onAccept,
   onAppendToPrompt,
   isAppended = true,
-  modelName,
 }) => {
   const [agreed, setAgreed] = useState<boolean>(true);
 
@@ -51,7 +49,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                 ข้อตกลงและนโยบายความปลอดภัย AI
               </h3>
               <p className="text-[11px] text-slate-500">
-                {modelName || 'On-Device AI'} (Prompt API) • มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
+                มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
               </p>
             </div>
           </div>

@@ -6,16 +6,34 @@ const ACTIVE_SESSION_ID_KEY = 'chrome_ai_active_session_id';
 
 /**
  * Sanitizes messages for localStorage storage.
- * Strips non-serializable File objects from imageAttachment to avoid JSON errors and reduce storage size.
+ * Strips non-serializable File/Blob/AudioBuffer objects from attachments to avoid JSON errors and reduce storage size.
  */
 function sanitizeMessageForStorage(message: Message): Message {
-  if (!message.imageAttachment) return message;
-  const safeAttachment = { ...message.imageAttachment };
-  delete safeAttachment.file;
-  return {
-    ...message,
-    imageAttachment: safeAttachment,
-  };
+  const result: Message = { ...message };
+
+  if (result.imageAttachment) {
+    const safeAttachment = { ...result.imageAttachment };
+    delete safeAttachment.file;
+    result.imageAttachment = safeAttachment;
+  }
+
+  if (result.imageAttachments && Array.isArray(result.imageAttachments)) {
+    result.imageAttachments = result.imageAttachments.map((img) => {
+      const safe = { ...img };
+      delete safe.file;
+      return safe;
+    });
+  }
+
+  if (result.audioAttachment) {
+    const safeAudio = { ...result.audioAttachment };
+    delete safeAudio.blob;
+    delete safeAudio.audioBuffer;
+    delete safeAudio.arrayBuffer;
+    result.audioAttachment = safeAudio;
+  }
+
+  return result;
 }
 
 class ChatHistoryService {

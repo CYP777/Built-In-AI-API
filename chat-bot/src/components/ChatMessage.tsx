@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, Layers, ChevronDown, X, Download, ZoomIn, Sparkles, ExternalLink, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Copy, Check, Layers, ChevronDown, X, Download, ZoomIn, Sparkles, ExternalLink, ShieldCheck, AlertTriangle, Music } from 'lucide-react';
 import { cleanCompressedSummary } from '../services/summarizer-service';
 import { stripMarkdown } from '../utils/markdown';
-import type { ImageAttachment } from '../types/ai';
+import type { ImageAttachment, AudioAttachment } from '../types/ai';
 
 export interface Message {
   id: string;
@@ -18,6 +18,8 @@ export interface Message {
   hasProfanity?: boolean;
   isSafetyAdvisory?: boolean;
   imageAttachment?: ImageAttachment;
+  imageAttachments?: ImageAttachment[];
+  audioAttachment?: AudioAttachment;
   compressionStats?: {
     originalTokens: number;
     compressedTokens: number;
@@ -34,6 +36,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [activeLightboxImage, setActiveLightboxImage] = useState<ImageAttachment | null>(null);
   const isUser = message.sender === 'user';
 
   // Handle Escape key to close image lightbox and prevent background scroll
@@ -96,7 +99,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {isExpanded && message.text && (() => {
           const cleanedText = cleanCompressedSummary(message.text);
           return (
-            <div className="my-2.5 px-2 sm:px-4 py-1 text-xs text-slate-600 leading-relaxed min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
+            <div className="my-2.5 px-2 sm:px-4 py-1 text-xs text-slate-600 leading-relaxed min-w-0 max-w-full wrap-break-word">
               <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400 mb-2 min-w-0">
                 <span className="text-emerald-700/90 font-semibold min-w-0">
                   สรุปบริบทเดิมที่บันทึกลงหน่วยความจำ:
@@ -107,7 +110,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                   </span>
                 )}
               </div>
-              <div className="min-w-0 max-w-full text-slate-600 leading-relaxed break-words [overflow-wrap:anywhere] space-y-1.5">
+              <div className="min-w-0 max-w-full text-slate-600 leading-relaxed wrap-break-word space-y-1.5">
                 <Markdown
                   remarkPlugins={[remarkGfm]}
                   components={{
@@ -115,7 +118,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                       <h3 className="text-xs font-bold text-slate-700 mt-2 mb-1">{children}</h3>
                     ),
                     p: ({ children }) => (
-                      <p className="mb-1.5 last:mb-0 break-words [overflow-wrap:anywhere] leading-relaxed text-slate-600">
+                      <p className="mb-1.5 last:mb-0 wrap-break-word leading-relaxed text-slate-600">
                         {children}
                       </p>
                     ),
@@ -130,7 +133,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                       </ol>
                     ),
                     li: ({ children }) => (
-                      <li className="break-words [overflow-wrap:anywhere] leading-relaxed">{children}</li>
+                      <li className="wrap-break-word leading-relaxed">{children}</li>
                     ),
                     strong: ({ children }) => (
                       <strong className="font-semibold text-slate-800">{children}</strong>
@@ -167,7 +170,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           message.isCompacted ? 'opacity-80 hover:opacity-100' : ''
         }`}
       >
-        <div className="group relative max-w-[85%] sm:max-w-[75%] min-w-0 rounded-2xl rounded-tr-xs bg-linear-to-br from-emerald-600 via-emerald-600 to-teal-700 text-white px-4 py-3 text-sm shadow-sm shadow-emerald-700/10 leading-relaxed break-words [overflow-wrap:anywhere]">
+        <div className="group relative max-w-[85%] sm:max-w-[75%] min-w-0 rounded-2xl rounded-tr-xs bg-linear-to-br from-emerald-600 via-emerald-600 to-teal-700 text-white px-4 py-3 text-sm shadow-sm shadow-emerald-700/10 leading-relaxed wrap-break-word">
           {/* Profanity Warning Badge */}
           {message.hasProfanity && (
             <div className="mb-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-rose-700/80 text-rose-100 text-[11px] font-semibold border border-rose-400/40 shadow-2xs">
@@ -176,35 +179,83 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             </div>
           )}
 
-          {/* Attached Image Preview if available */}
-          {message.imageAttachment && (
-            <div className="mb-2">
-              <button
-                type="button"
-                onClick={() => setIsLightboxOpen(true)}
-                className="group/img block relative overflow-hidden rounded-xl border border-white/20 bg-black/10 hover:border-white/50 hover:shadow-md transition cursor-zoom-in max-w-sm text-left"
-                title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
-              >
-                <img
-                  src={message.imageAttachment.url}
-                  alt={message.imageAttachment.name}
-                  className="max-h-60 w-auto rounded-xl object-contain transition-transform duration-200 group-hover/img:scale-[1.02]"
-                />
-                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                  <span className="bg-black/70 text-white text-xs px-2.5 py-1 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow-sm">
-                    <ZoomIn className="w-3.5 h-3.5" />
-                    ดูภาพเต็ม
-                  </span>
-                </div>
-                <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between gap-1 rounded-lg bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-xs">
-                  <span className="truncate">{message.imageAttachment.name}</span>
-                  <span className="shrink-0 opacity-80">
-                    {(message.imageAttachment.size / 1024).toFixed(1)} KB
-                  </span>
-                </div>
-              </button>
+          {/* Attached Audio Preview if available */}
+          {message.audioAttachment && (
+            <div className="mb-2.5 rounded-xl border border-white/25 bg-black/20 p-2.5 backdrop-blur-xs text-xs text-white max-w-sm">
+              <div className="flex items-center gap-2 mb-1.5 min-w-0">
+                <Music className="h-4 w-4 text-emerald-300 shrink-0" />
+                <span className="font-semibold truncate flex-1 text-white/95">
+                  {message.audioAttachment.name}
+                </span>
+                <span className="text-[10px] text-emerald-100/80 shrink-0 font-mono">
+                  {(message.audioAttachment.size / 1024).toFixed(1)} KB
+                  {message.audioAttachment.duration ? ` • ${Math.round(message.audioAttachment.duration)}s` : ''}
+                </span>
+              </div>
+              <audio
+                controls
+                src={message.audioAttachment.url}
+                className="w-full h-8 rounded-lg accent-emerald-500"
+              />
             </div>
           )}
+
+          {/* Attached Images Preview if available */}
+          {(() => {
+            const allImages =
+              message.imageAttachments && message.imageAttachments.length > 0
+                ? message.imageAttachments
+                : message.imageAttachment
+                ? [message.imageAttachment]
+                : [];
+
+            if (allImages.length === 0) return null;
+
+            return (
+              <div
+                className={`mb-2.5 grid gap-2 ${
+                  allImages.length === 1
+                    ? 'grid-cols-1 max-w-sm'
+                    : allImages.length === 2
+                    ? 'grid-cols-2 max-w-md'
+                    : 'grid-cols-2 sm:grid-cols-3 max-w-lg'
+                }`}
+              >
+                {allImages.map((img, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setActiveLightboxImage(img);
+                      setIsLightboxOpen(true);
+                    }}
+                    className="group/img block relative overflow-hidden rounded-xl border border-white/20 bg-black/10 hover:border-white/50 hover:shadow-md transition cursor-zoom-in text-left"
+                    title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
+                  >
+                    <img
+                      src={img.url}
+                      alt={img.name}
+                      className={`w-full rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02] ${
+                        allImages.length === 1 ? 'max-h-60' : 'h-32 sm:h-36'
+                      }`}
+                    />
+                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                      <span className="bg-black/70 text-white text-xs px-2 py-0.5 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-sm">
+                        <ZoomIn className="w-3.5 h-3.5" />
+                        ดูภาพเต็ม
+                      </span>
+                    </div>
+                    <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between gap-1 rounded-lg bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-xs">
+                      <span className="truncate">{img.name}</span>
+                      <span className="shrink-0 opacity-80">
+                        {(img.size / 1024).toFixed(1)} KB
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Message Text */}
           <div className="whitespace-pre-wrap leading-relaxed">
@@ -220,62 +271,74 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Lightbox Modal */}
         {isLightboxOpen &&
           typeof document !== 'undefined' &&
-          message.imageAttachment &&
           createPortal(
-            <div
-              className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-black/90 backdrop-blur-sm p-4 sm:p-6 animate-in fade-in duration-150 select-none"
-              onClick={() => setIsLightboxOpen(false)}
-            >
-              <div
-                className="w-full max-w-5xl flex items-center justify-between py-2 px-3 text-white text-sm shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center gap-2 truncate max-w-md">
-                  <span className="font-semibold text-white/90 truncate">
-                    {message.imageAttachment.name}
-                  </span>
-                  <span className="text-xs text-white/60 shrink-0">
-                    ({(message.imageAttachment.size / 1024).toFixed(1)} KB)
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <a
-                    href={message.imageAttachment.url}
-                    download={message.imageAttachment.name}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
-                    title="ดาวน์โหลดรูปภาพนี้"
+            (() => {
+              const allImages =
+                message.imageAttachments && message.imageAttachments.length > 0
+                  ? message.imageAttachments
+                  : message.imageAttachment
+                  ? [message.imageAttachment]
+                  : [];
+              const activeImg = activeLightboxImage || allImages[0];
+              if (!activeImg) return null;
+
+              return (
+                <div
+                  className="fixed inset-0 z-100 flex flex-col items-center justify-between bg-black/90 backdrop-blur-sm p-4 sm:p-6 animate-in fade-in duration-150 select-none"
+                  onClick={() => setIsLightboxOpen(false)}
+                >
+                  <div
+                    className="w-full max-w-5xl flex items-center justify-between py-2 px-3 text-white text-sm shrink-0"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <Download className="w-4 h-4" />
-                    <span className="hidden sm:inline">ดาวน์โหลด</span>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => setIsLightboxOpen(false)}
-                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white transition cursor-pointer"
-                    title="ปิด (Esc)"
+                    <div className="flex items-center gap-2 truncate max-w-md">
+                      <span className="font-semibold text-white/90 truncate">
+                        {activeImg.name}
+                      </span>
+                      <span className="text-xs text-white/60 shrink-0">
+                        ({(activeImg.size / 1024).toFixed(1)} KB)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={activeImg.url}
+                        download={activeImg.name}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white text-xs font-medium transition cursor-pointer"
+                        title="ดาวน์โหลดรูปภาพนี้"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden sm:inline">ดาวน์โหลด</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setIsLightboxOpen(false)}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/25 text-white transition cursor-pointer"
+                        title="ปิด (Esc)"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className="flex-1 flex items-center justify-center p-2 min-h-0 max-w-full overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <X className="w-5 h-5" />
-                  </button>
+                    <img
+                      src={activeImg.url}
+                      alt={activeImg.name}
+                      className="max-h-[82vh] max-w-[92vw] object-contain rounded-xl shadow-2xl cursor-default"
+                    />
+                  </div>
+                  <div
+                    className="py-1 text-center text-xs text-white/50 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    คลิกบริเวณพื้นหลังหรือกด Esc เพื่อปิด
+                  </div>
                 </div>
-              </div>
-              <div
-                className="flex-1 flex items-center justify-center p-2 min-h-0 max-w-full overflow-hidden"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <img
-                  src={message.imageAttachment.url}
-                  alt={message.imageAttachment.name}
-                  className="max-h-[82vh] max-w-[92vw] object-contain rounded-xl shadow-2xl cursor-default"
-                />
-              </div>
-              <div
-                className="py-1 text-center text-xs text-white/50 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              >
-                คลิกบริเวณพื้นหลังหรือกด Esc เพื่อปิด
-              </div>
-            </div>,
+              );
+            })(),
             document.body
           )}
       </div>
@@ -340,9 +403,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Thinking / Typing state before first token arrives */}
         {!message.text && message.isStreaming && (
           <div className="flex items-center gap-2.5 py-2 text-slate-500 select-none animate-in fade-in duration-200">
-            <div className="flex h-5 w-5 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200/60 shadow-2xs">
-              <Sparkles className="h-3 w-3 animate-pulse text-emerald-600" />
-            </div>
             <span className="text-xs font-medium text-slate-500">AI กำลังคิด...</span>
             <div className="flex items-center gap-1 ml-0.5">
               <span
@@ -371,7 +431,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Message Content: Clean Canvas Typography */}
         {message.text && (
           <div
-            className={`min-w-0 max-w-full text-slate-800 text-[14px] sm:text-[14.5px] leading-relaxed break-words [overflow-wrap:anywhere] ${
+            className={`min-w-0 max-w-full text-slate-800 text-[14px] sm:text-[14.5px] leading-relaxed wrap-break-word ${
               message.isSafetyAdvisory
                 ? 'rounded-2xl border border-amber-200/90 bg-amber-50/50 p-4'
                 : ''
@@ -396,18 +456,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                   </h3>
                 ),
                 p: ({ children }) => (
-                  <p className="leading-relaxed mb-2.5 last:mb-0 break-words [overflow-wrap:anywhere]">
+                  <p className="leading-relaxed mb-2.5 last:mb-0 wrap-break-word">
                     {children}
                   </p>
                 ),
                 ul: ({ children }) => (
-                  <ul className="list-disc pl-5 my-2 space-y-1.5 break-words">{children}</ul>
+                  <ul className="list-disc pl-5 my-2 space-y-1.5 wrap-break-word">{children}</ul>
                 ),
                 ol: ({ children }) => (
-                  <ol className="list-decimal pl-5 my-2 space-y-1.5 break-words">{children}</ol>
+                  <ol className="list-decimal pl-5 my-2 space-y-1.5 wrap-break-word">{children}</ol>
                 ),
                 li: ({ children }) => (
-                  <li className="leading-relaxed break-words">{children}</li>
+                  <li className="leading-relaxed wrap-break-word">{children}</li>
                 ),
                 pre: ({ children, ...props }) => (
                   <div className="relative my-3 rounded-2xl overflow-hidden border border-slate-800/90 bg-slate-950 text-slate-100 shadow-md">
