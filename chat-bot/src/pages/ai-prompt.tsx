@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, RefreshCw, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert, Music, Radio } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
-import type { ImageAttachment } from '../types/ai';
+import type { ImageAttachment, AudioAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { SettingsModal } from '../components/SettingsModal';
@@ -85,8 +85,17 @@ const AIPromptPage: React.FC = () => {
   });
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [selectedImage, setSelectedImage] = useState<ImageAttachment | null>(null);
+  const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
+  const [selectedAudio, setSelectedAudio] = useState<AudioAttachment | null>(null);
+  const [isRecordingAudio, setIsRecordingAudio] = useState<boolean>(false);
+  const [recordingDuration, setRecordingDuration] = useState<number>(0);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
@@ -104,7 +113,7 @@ const AIPromptPage: React.FC = () => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  // Helper to read File into persistent Data URL and set selectedImage
+  // Helper to read File into persistent Data URL and add to selectedImages
   const processImageFile = useCallback((file: File, fallbackName?: string) => {
     if (!file.type.startsWith('image/')) {
       alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น (เช่น PNG, JPG, WebP, GIF)');
@@ -112,22 +121,165 @@ const AIPromptPage: React.FC = () => {
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      alert('ขนาดไฟล์รูปภาพเกินกำหนด (จำกัดไม่เกิน 10 MB)');
+      alert('ขนาดไฟล์รูปภาพเกินกำหนด (จำกัดไม่เกิน 10 MB ต่อภาพ)');
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      setSelectedImage({
-        url: dataUrl,
-        name: file.name || fallbackName || `image-${Date.now()}.png`,
-        size: file.size,
-        type: file.type || 'image/png',
-        file: file,
+      setSelectedImages((prev) => {
+        if (prev.length >= 8) {
+          alert('จำกัดการแนบรูปภาพไม่เกิน 8 รูปต่อครั้ง');
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            url: dataUrl,
+            name: file.name || fallbackName || `image-${Date.now()}.png`,
+            size: file.size,
+            type: file.type || 'image/png',
+            file: file,
+          },
+        ];
       });
     };
     reader.readAsDataURL(file);
+  }, []);
+
+  // Helper to process audio file into AudioAttachment
+  const processAudioFile = useCallback((file: File) => {
+    if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|m4a|webm|aac|flac)$/i.test(file.name)) {
+      alert('กรุณาเลือกไฟล์เสียง (เช่น MP3, WAV, OGG, M4A, WebM)');
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      alert('ขนาดไฟล์เสียงเกินกำหนด (จำกัดไม่เกิน 25 MB)');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const dataUrl = event.target?.result as string;
+      let audioBuffer: AudioBuffer | undefined;
+      let duration: number | undefined;
+      try {
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const ab = await file.arrayBuffer();
+          audioBuffer = await ctx.decodeAudioData(ab.slice(0));
+          duration = audioBuffer.duration;
+          ctx.close();
+        }
+      } catch (err) {
+        console.warn('Audio decode error:', err);
+      }
+
+      setSelectedAudio({
+        url: dataUrl,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'audio/webm',
+        duration,
+        blob: file,
+        audioBuffer,
+      });
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Direct Audio Recording for Multimodal Prompt API
+  const startAudioRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          const dataUrl = ev.target?.result as string;
+          let audioBuffer: AudioBuffer | undefined;
+          let duration: number | undefined;
+          try {
+            const AudioCtx =
+              window.AudioContext ||
+              (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+            if (AudioCtx) {
+              const ctx = new AudioCtx();
+              const ab = await audioBlob.arrayBuffer();
+              audioBuffer = await ctx.decodeAudioData(ab.slice(0));
+              duration = audioBuffer.duration;
+              ctx.close();
+            }
+          } catch (err) {
+            console.warn('decodeAudioData on recording fallback:', err);
+          }
+
+          setSelectedAudio({
+            url: dataUrl,
+            name: `voice-recording-${Date.now()}.webm`,
+            size: audioBlob.size,
+            type: mimeType,
+            duration,
+            blob: audioBlob,
+            audioBuffer,
+          });
+        };
+        reader.readAsDataURL(audioBlob);
+
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start(200);
+      setIsRecordingAudio(true);
+      setRecordingDuration(0);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Audio recording failed:', err);
+      alert('ไม่สามารถเข้าถึงไมโครโฟนสำหรับการบันทึกเสียงได้ (กรุณาอนุญาตการเข้าถึงไมโครโฟน)');
+    }
+  }, []);
+
+  const stopAudioRecording = useCallback(() => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecordingAudio(false);
+  }, []);
+
+  const cancelAudioRecording = useCallback(() => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    audioChunksRef.current = [];
+    setIsRecordingAudio(false);
+    setRecordingDuration(0);
   }, []);
 
   // Drag and drop state
@@ -152,29 +304,49 @@ const AIPromptPage: React.FC = () => {
       setIsDragging(false);
       const files = e.dataTransfer.files;
       if (files && files.length > 0) {
-        const file = files[0];
-        if (file.type.startsWith('image/')) {
-          processImageFile(file);
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file.type.startsWith('image/')) {
+            processImageFile(file);
+          } else if (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|webm|aac|flac)$/i.test(file.name)) {
+            processAudioFile(file);
+          }
         }
       }
     },
-    [processImageFile]
+    [processImageFile, processAudioFile]
   );
 
   // Handle file select (Image attachment)
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      processImageFile(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        processImageFile(files[i]);
+      }
     }
     e.target.value = '';
   };
 
-  // Handle remove selected image
-  const handleRemoveImage = useCallback(() => {
-    setSelectedImage(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  // Handle audio file select
+  const handleAudioFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processAudioFile(file);
+    }
+    e.target.value = '';
+  };
+
+  // Handle remove specific selected image
+  const handleRemoveImage = useCallback((index: number) => {
+    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Handle remove selected audio
+  const handleRemoveAudio = useCallback(() => {
+    setSelectedAudio(null);
+    if (audioFileInputRef.current) {
+      audioFileInputRef.current.value = '';
     }
   }, []);
 
@@ -191,7 +363,6 @@ const AIPromptPage: React.FC = () => {
           if (file) {
             e.preventDefault();
             processImageFile(file, `clipboard-image-${Date.now()}.png`);
-            break;
           }
         }
       }
@@ -488,19 +659,21 @@ const AIPromptPage: React.FC = () => {
       .filter((m) => !m.isCompacted && !m.isCompressedContext)
       .reduce((acc, m) => {
         const textTokens = m.text ? estimateTokens(m.text) : 0;
-        const imgTokens = m.imageAttachment ? 300 : 0;
-        return acc + textTokens + imgTokens;
+        const imgTokens = (m.imageAttachments?.length || (m.imageAttachment ? 1 : 0)) * 300;
+        const audioTokens = m.audioAttachment ? 300 : 0;
+        return acc + textTokens + imgTokens + audioTokens;
       }, 0);
   }, [messages]);
 
   const tokenUsage = useMemo(() => {
     const draftTokens = inputMessage.trim() ? estimateTokens(inputMessage.trim()) : 0;
-    const draftImgTokens = selectedImage ? 300 : 0;
+    const draftImgTokens = selectedImages.length * 300;
+    const draftAudioTokens = selectedAudio ? 300 : 0;
     const systemTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
     return aiService.getContextTokenUsage(
-      conversationTokens + systemTokens + draftTokens + draftImgTokens
+      conversationTokens + systemTokens + draftTokens + draftImgTokens + draftAudioTokens
     );
-  }, [conversationTokens, systemPrompt, inputMessage, selectedImage]);
+  }, [conversationTokens, systemPrompt, inputMessage, selectedImages, selectedAudio]);
 
   const maxTokens = tokenUsage.maxTokens || 9216;
   const tokensSoFar = Math.min(tokenUsage.tokensSoFar, maxTokens);
@@ -697,7 +870,11 @@ const AIPromptPage: React.FC = () => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
-    setSelectedImage(null);
+    setSelectedImages([]);
+    setSelectedAudio(null);
+    if (isRecordingAudio) {
+      cancelAudioRecording();
+    }
     messagesRef.current = [];
     setMessages([]);
     setCurrentSessionId(null);
@@ -717,7 +894,7 @@ const AIPromptPage: React.FC = () => {
       temperature,
       topK,
     });
-  }, [handleStop, isListening, isPolicyAppended, temperature, topK]);
+  }, [handleStop, isListening, isRecordingAudio, cancelAudioRecording, isPolicyAppended, temperature, topK]);
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
@@ -727,12 +904,25 @@ const AIPromptPage: React.FC = () => {
       setIsListening(false);
       setInterimTranscript('');
     }
+    if (isRecordingAudio) {
+      stopAudioRecording();
+    }
 
     const promptText = (textToSend || inputMessage).trim();
-    const currentImage = selectedImage;
-    if ((!promptText && !currentImage) || isGenerating) return;
+    const currentImages = [...selectedImages];
+    const currentAudio = selectedAudio;
+    if ((!promptText && currentImages.length === 0 && !currentAudio) || isGenerating) return;
 
-    const effectiveUserPrompt = promptText || (currentImage ? 'ช่วยวิเคราะห์รูปภาพนี้' : '');
+    const defaultPromptDesc =
+      currentImages.length > 1
+        ? 'โปรดวิเคราะห์และเปรียบเทียบรูปภาพเหล่านี้'
+        : currentImages.length === 1
+        ? 'ช่วยวิเคราะห์รูปภาพนี้'
+        : currentAudio
+        ? 'โปรดฟังและตอบสนองต่อเสียงนี้'
+        : '';
+
+    const effectiveUserPrompt = promptText || defaultPromptDesc;
     let activeSystemPrompt = systemPromptRef.current || systemPrompt;
 
     // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 800 หรือใช้ไป >= 88%)
@@ -783,7 +973,8 @@ const AIPromptPage: React.FC = () => {
     }
 
     setInputMessage('');
-    setSelectedImage(null);
+    setSelectedImages([]);
+    setSelectedAudio(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -807,7 +998,9 @@ const AIPromptPage: React.FC = () => {
         text: effectiveUserPrompt,
         timestamp: timeString,
         hasProfanity: true,
-        imageAttachment: currentImage || undefined,
+        imageAttachment: currentImages[0] || undefined,
+        imageAttachments: currentImages.length > 0 ? currentImages : undefined,
+        audioAttachment: currentAudio || undefined,
       };
 
       const aiSafetyItem: Message = {
@@ -850,7 +1043,9 @@ const AIPromptPage: React.FC = () => {
       sender: 'user',
       text: effectiveUserPrompt,
       timestamp: timeString,
-      imageAttachment: currentImage || undefined,
+      imageAttachment: currentImages[0] || undefined,
+      imageAttachments: currentImages.length > 0 ? currentImages : undefined,
+      audioAttachment: currentAudio || undefined,
     };
 
     const aiMessageItem: Message = {
@@ -904,7 +1099,8 @@ const AIPromptPage: React.FC = () => {
           });
         },
         controller.signal,
-        currentImage?.file || null
+        currentImages.map((img) => img.file!).filter(Boolean),
+        currentAudio
       );
 
       // 1. ปลดสถานะ Streaming ออกจากข้อความ AI ทันที (หยุดเคอร์เซอร์กะพริบ)
@@ -1013,7 +1209,8 @@ const AIPromptPage: React.FC = () => {
               });
             },
             controller.signal,
-            currentImage?.file || null
+            currentImages.map((img) => img.file!).filter(Boolean),
+            currentAudio
           );
 
           setMessages((prev) => {
@@ -1100,7 +1297,8 @@ const AIPromptPage: React.FC = () => {
         setIsListening(false);
         setInterimTranscript('');
       }
-      setSelectedImage(null);
+      setSelectedImages([]);
+      setSelectedAudio(null);
       setCurrentSessionId(session.id);
       chatHistoryService.setActiveSessionId(session.id);
       messagesRef.current = session.messages;
@@ -1172,7 +1370,8 @@ const AIPromptPage: React.FC = () => {
     }
     messagesRef.current = [];
     setMessages([]);
-    setSelectedImage(null);
+    setSelectedImages([]);
+    setSelectedAudio(null);
     setCurrentSessionId(null);
     chatHistoryService.setActiveSessionId(null);
     setPromptHistory([]);
@@ -1463,32 +1662,98 @@ const AIPromptPage: React.FC = () => {
                 : 'border-slate-200/90 hover:border-slate-300 focus-within:border-emerald-500/70 focus-within:shadow-[0_8px_30px_rgba(16,185,129,0.12)] focus-within:ring-4 focus-within:ring-emerald-500/10'
             }`}
           >
-            {/* Attached Image Preview bar */}
-            {selectedImage && (
-              <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-emerald-200/90 bg-emerald-50/70 p-2 animate-in fade-in duration-150">
-                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-2xs">
-                  <img
-                    src={selectedImage.url}
-                    alt={selectedImage.name}
-                    className="h-full w-full object-cover"
-                  />
+            {/* Attached Images Preview Shelf */}
+            {selectedImages.length > 0 && (
+              <div className="mb-2.5 flex flex-wrap gap-2 animate-in fade-in duration-150">
+                {selectedImages.map((img, idx) => (
+                  <div
+                    key={idx}
+                    className="group/thumb relative flex items-center gap-2 rounded-xl border border-emerald-200/90 bg-emerald-50/80 p-1.5 pr-2.5 shadow-2xs max-w-50"
+                  >
+                    <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-emerald-200 bg-white">
+                      <img src={img.url} alt={img.name} className="h-full w-full object-cover" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[11px] font-semibold text-slate-800" title={img.name}>
+                        {img.name}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-mono">
+                        {(img.size / 1024).toFixed(0)} KB
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveImage(idx)}
+                      title="ลบรูปภาพนี้"
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-emerald-200/60 hover:text-slate-700 transition cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Attached Audio Preview Card */}
+            {selectedAudio && (
+              <div className="mb-2.5 flex items-center gap-2.5 rounded-2xl border border-teal-200/90 bg-teal-50/80 p-2 animate-in fade-in duration-150">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-600 text-white shadow-2xs">
+                  <Music className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-slate-800">
-                    {selectedImage.name}
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    {(selectedImage.size / 1024).toFixed(1)} KB • Vision Multimodal
-                  </p>
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="truncate text-xs font-semibold text-slate-800" title={selectedAudio.name}>
+                      {selectedAudio.name}
+                    </p>
+                    <span className="shrink-0 text-[10px] text-teal-700 font-mono font-medium">
+                      {(selectedAudio.size / 1024).toFixed(1)} KB
+                      {selectedAudio.duration ? ` • ~${Math.round(selectedAudio.duration)}s` : ''}
+                    </span>
+                  </div>
+                  <audio controls src={selectedAudio.url} className="mt-1 h-7 w-full accent-teal-600" />
                 </div>
                 <button
                   type="button"
-                  onClick={handleRemoveImage}
-                  title="ลบรูปภาพที่เลือก"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-emerald-100/80 hover:text-slate-700 transition cursor-pointer"
+                  onClick={handleRemoveAudio}
+                  title="ลบไฟล์เสียงนี้"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-teal-100 hover:text-slate-700 transition cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
+              </div>
+            )}
+
+            {/* Direct Audio Recording Live Banner */}
+            {isRecordingAudio && (
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl border border-rose-300 bg-rose-50/95 p-2 text-xs text-rose-900 animate-in fade-in duration-150 shadow-2xs">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <span className="flex h-3 w-3 relative shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
+                  </span>
+                  <span className="font-semibold shrink-0 text-rose-700">กำลังอัดเสียงสด (Prompt API Audio):</span>
+                  <span className="font-mono font-bold text-rose-900">
+                    {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={stopAudioRecording}
+                    className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 text-[11px] font-semibold shadow-2xs transition cursor-pointer"
+                    title="เสร็จสิ้นการบันทึกเสียง"
+                  >
+                    เสร็จสิ้น
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelAudioRecording}
+                    className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 transition cursor-pointer"
+                    title="ยกเลิกการบันทึกเสียง"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1542,13 +1807,23 @@ const AIPromptPage: React.FC = () => {
               </div>
             )}
 
-            {/* Hidden File Input for images */}
+            {/* Hidden File Input for images (Multi-image support) */}
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               accept="image/png,image/jpeg,image/webp,image/gif"
               className="hidden"
               onChange={handleFileSelect}
+            />
+
+            {/* Hidden File Input for audio */}
+            <input
+              ref={audioFileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm,.aac"
+              className="hidden"
+              onChange={handleAudioFileSelect}
             />
 
             {/* Textarea Input */}
@@ -1560,7 +1835,7 @@ const AIPromptPage: React.FC = () => {
               onChange={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder="พิมพ์ข้อความของคุณที่นี่... (กด Shift+Enter ขึ้นบรรทัดใหม่)"
+              placeholder="พิมพ์ข้อความของคุณที่นี่... (รองรับการส่งภาพหลายรูปและเสียง หรือกด Shift+Enter ขึ้นบรรทัดใหม่)"
               className="max-h-40 min-h-11 w-full resize-none border-0 bg-transparent px-3 py-1.5 text-sm sm:text-[14.5px] text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
             />
 
@@ -1568,17 +1843,17 @@ const AIPromptPage: React.FC = () => {
             <div className="flex items-center justify-between pt-1 border-t border-slate-100/80 mt-1 px-1">
               {/* Left Action Buttons & Subtle Token Indicator */}
               <div className="flex items-center gap-1.5">
-                {/* Voice Input Button */}
+                {/* Voice Typing Button (Speech-to-Text) */}
                 <button
                   type="button"
                   onClick={handleToggleListening}
-                  disabled={isGenerating || !isSpeechSupported}
+                  disabled={isGenerating || !isSpeechSupported || isRecordingAudio}
                   title={
                     !isSpeechSupported
                       ? 'เบราว์เซอร์นี้ไม่รองรับระบบ Speech Recognition'
                       : isListening
                       ? 'กำลังฟังเสียง... (คลิกเพื่อหยุด)'
-                      : `พิมพ์ด้วยเสียง (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
+                      : `พิมพ์ด้วยเสียง STT (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
                   }
                   className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
                     isListening
@@ -1589,19 +1864,60 @@ const AIPromptPage: React.FC = () => {
                   {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </button>
 
-                {/* Image Attach Button */}
+                {/* Direct Audio Recording Button (Prompt API Multimodal Audio) */}
+                <button
+                  type="button"
+                  onClick={isRecordingAudio ? stopAudioRecording : startAudioRecording}
+                  disabled={isGenerating || isListening}
+                  title={
+                    isRecordingAudio
+                      ? 'กำลังบันทึกเสียงสด... (คลิกเพื่อเสร็จสิ้น)'
+                      : 'บันทึกเสียงสดส่งตรงให้ AI (Prompt API Multimodal Audio)'
+                  }
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                    isRecordingAudio
+                      ? 'border border-rose-600 bg-rose-600 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
+                      : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                  } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <Radio className="h-4 w-4" />
+                </button>
+
+                {/* Audio File Attach Button */}
+                <button
+                  type="button"
+                  onClick={() => audioFileInputRef.current?.click()}
+                  disabled={isGenerating}
+                  title="แนบไฟล์เสียง (MP3, WAV, WebM ฯลฯ สำหรับ Audio Multimodal)"
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                    selectedAudio
+                      ? 'border border-teal-500 bg-teal-50 text-teal-700 ring-2 ring-teal-400/20'
+                      : 'text-slate-400 hover:text-teal-700 hover:bg-teal-50'
+                  } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <Music className="h-4 w-4" />
+                </button>
+
+                {/* Image Attach Button (Multiple) */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isGenerating}
-                  title="แนบรูปภาพ (หรือกด Ctrl+V เพื่อวางรูป)"
+                  title="แนบรูปภาพ (รองรับหลายรูปพร้อมกัน หรือกด Ctrl+V เพื่อวางรูป)"
                   className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
-                    selectedImage
+                    selectedImages.length > 0
                       ? 'border border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
                       : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
-                  <ImageIcon className="h-4 w-4" />
+                  <div className="relative">
+                    <ImageIcon className="h-4 w-4" />
+                    {selectedImages.length > 1 && (
+                      <span className="absolute -top-1.5 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white">
+                        {selectedImages.length}
+                      </span>
+                    )}
+                  </div>
                 </button>
 
                 <div className="h-3.5 w-px bg-slate-200/80 mx-0.5 hidden sm:block" />
@@ -1624,32 +1940,11 @@ const AIPromptPage: React.FC = () => {
                   >
                     {contextPercentage}%
                   </span>
-
-                  {isCompressingContext ? (
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 animate-pulse">
-                      <RefreshCw className="h-2.5 w-2.5 animate-spin text-emerald-600" />
-                      บีบอัด...
-                    </span>
-                  ) : isGenerating ? (
-                    <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                      </span>
-                      <span>AI คิดอยู่...</span>
-                    </span>
-                  ) : null}
                 </div>
               </div>
 
               {/* Right: Character count + Send/Stop Button */}
               <div className="flex items-center gap-2">
-                {inputMessage.length > 0 && (
-                  <span className="hidden sm:inline text-[11px] text-slate-400 font-mono">
-                    {inputMessage.length}
-                  </span>
-                )}
-
                 {isGenerating ? (
                   <button
                     type="button"
@@ -1663,7 +1958,7 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleSend()}
-                    disabled={!inputMessage.trim() && !selectedImage}
+                    disabled={!inputMessage.trim() && selectedImages.length === 0 && !selectedAudio}
                     title="ส่งข้อความ"
                     className="flex h-8.5 w-8.5 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-25 disabled:hover:bg-emerald-600 disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed"
                   >
@@ -1676,7 +1971,7 @@ const AIPromptPage: React.FC = () => {
 
           {/* Micro Footer Caption */}
           <div className="text-center text-[11px] text-slate-400/80 px-2 select-none">
-            Google Chrome Built-in AI (Prompt API) • ประมวลผลบนเครื่อง (On-Device) ปลอดภัยและเป็นส่วนตัว 100%
+            Google Chrome Built-in AI • ประมวลผลบนเครื่อง (On-Device) ปลอดภัยและเป็นส่วนตัว 100%
           </div>
         </div>
       </footer>
@@ -1689,7 +1984,6 @@ const AIPromptPage: React.FC = () => {
         onAccept={handleAcceptPolicy}
         onAppendToPrompt={handleTogglePolicyInPrompt}
         isAppended={isPolicyAppended}
-        modelName={activeModelInfo.modelName}
       />
 
       {/* Settings Modal */}

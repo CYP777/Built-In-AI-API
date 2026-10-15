@@ -4,6 +4,10 @@ import type {
   AILanguageModelCreateOptions,
   AIMultimodalPart,
   AIPromptInput,
+  AIVisualInput,
+  AIAudioInput,
+  AudioAttachment,
+  AILanguageModelExpectedInput,
 } from '../types/ai';
 
 export type AIStatus = 'checking' | 'available' | 'downloading' | 'unavailable' | 'mock';
@@ -17,6 +21,7 @@ export interface AIServiceState {
   modelName?: string;
   hasGpu?: boolean;
   isMultimodal?: boolean;
+  isAudioMultimodal?: boolean;
 }
 
 class AIService {
@@ -24,37 +29,55 @@ class AIService {
   private factory: AILanguageModelFactory | null = null;
   private currentSystemPrompt: string = '';
   private isMultimodalSupported: boolean | null = null;
+  private isAudioSupported: boolean | null = null;
 
   public getDefaultSystemPrompt(modelName?: string): string {
     const name = modelName || this.detectModelType().modelName;
     return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
   }
 
-  public async checkMultimodalSupport(): Promise<boolean> {
-    if (this.isMultimodalSupported !== null) {
-      return this.isMultimodalSupported;
+  public async checkMultimodalSupport(): Promise<{ image: boolean; audio: boolean }> {
+    if (this.isMultimodalSupported !== null && this.isAudioSupported !== null) {
+      return { image: this.isMultimodalSupported, audio: this.isAudioSupported };
     }
 
     this.factory = this.getFactory();
     if (!this.factory) {
       this.isMultimodalSupported = false;
-      return false;
+      this.isAudioSupported = false;
+      return { image: false, audio: false };
     }
+
+    let imageOk = false;
+    let audioOk = false;
 
     try {
       if (typeof this.factory.availability === 'function') {
-        const avail = await this.factory.availability({
-          expectedInputs: [{ type: 'text' }, { type: 'image' }],
-        });
-        this.isMultimodalSupported = avail === 'readily' || avail === 'available';
-        return this.isMultimodalSupported;
+        try {
+          const availImg = await this.factory.availability({
+            expectedInputs: [{ type: 'text' }, { type: 'image' }],
+          });
+          imageOk = availImg === 'readily' || availImg === 'available';
+        } catch {
+          imageOk = false;
+        }
+
+        try {
+          const availAudio = await this.factory.availability({
+            expectedInputs: [{ type: 'text' }, { type: 'audio' }],
+          });
+          audioOk = availAudio === 'readily' || availAudio === 'available';
+        } catch {
+          audioOk = false;
+        }
       }
     } catch {
       // ignore
     }
 
-    this.isMultimodalSupported = false;
-    return false;
+    this.isMultimodalSupported = imageOk;
+    this.isAudioSupported = audioOk;
+    return { image: imageOk, audio: audioOk };
   }
 
   public detectModelType(): {
@@ -351,9 +374,55 @@ class AIService {
     userMessage: string,
     onChunk: (chunkText: string) => void,
     signal?: AbortSignal,
-    imageFile?: File | Blob | null
+    images?: Array<File | Blob | AIVisualInput> | File | Blob | null,
+    audio?: AIAudioInput | AudioAttachment | null
   ): Promise<string> {
     this.factory = this.getFactory();
+
+    // Normalize images into an array
+    const imageList: Array<File | Blob | AIVisualInput> = [];
+    if (images) {
+      if (Array.isArray(images)) {
+        imageList.push(...images);
+      } else {
+        imageList.push(images);
+      }
+    }
+
+    // Normalize audio input
+    let audioInput: AIAudioInput | null = null;
+    let audioMeta: { name?: string; size?: number; type?: string; duration?: number } | null = null;
+    if (audio) {
+      if ('url' in audio && 'name' in audio) {
+        const att = audio as AudioAttachment;
+        audioInput = att.blob || att.audioBuffer || att.arrayBuffer || null;
+        audioMeta = { name: att.name, size: att.size, type: att.type, duration: att.duration };
+      } else if (audio instanceof Blob) {
+        audioInput = audio;
+        audioMeta = {
+          name: audio instanceof File ? audio.name : 'audio-clip.webm',
+          size: audio.size,
+          type: audio.type || 'audio/webm',
+        };
+      } else if (typeof AudioBuffer !== 'undefined' && audio instanceof AudioBuffer) {
+        audioInput = audio;
+        audioMeta = {
+          name: 'audio-buffer',
+          duration: audio.duration,
+          size: audio.length * audio.numberOfChannels * 4,
+          type: 'audio/raw',
+        };
+      } else if (audio instanceof ArrayBuffer || ArrayBuffer.isView(audio)) {
+        audioInput = audio as AIAudioInput;
+        audioMeta = {
+          name: 'audio-buffer-view',
+          size: audio.byteLength,
+          type: 'audio/raw',
+        };
+      }
+    }
+
+    const hasMultimodalInput = imageList.length > 0 || audioInput !== null;
 
     // If real Built-in AI is available
     if (this.factory) {
@@ -375,35 +444,34 @@ class AIService {
       }
 
       const effectivePromptText =
-        memorySnippet && !imageFile
+        memorySnippet && !hasMultimodalInput
           ? `[บริบทความจำจากการสนทนาก่อนหน้านี้ที่คุณเพิ่งคุยกับผู้ใช้]:\n${memorySnippet}\n\n[ข้อความหรือคำถามล่าสุดจากผู้ใช้]:\n${userMessage}`
           : userMessage;
 
-      // If an image is attached, create/use multimodal session
       let sessionToUse = this.session;
       let isolatedMultimodalSession: AILanguageModelSession | null = null;
-      let imageBitmap: ImageBitmap | null = null;
+      const openedBitmaps: ImageBitmap[] = [];
 
-      if (imageFile) {
-        if (typeof createImageBitmap === 'function') {
-          try {
-            imageBitmap = await createImageBitmap(imageFile);
-          } catch (bitmapErr) {
-            console.warn('createImageBitmap failed, falling back to raw File/Blob:', bitmapErr);
-          }
+      if (hasMultimodalInput) {
+        const expectedInputs: AILanguageModelExpectedInput[] = [{ type: 'text' }];
+        if (imageList.length > 0) {
+          expectedInputs.push({ type: 'image' });
+        }
+        if (audioInput) {
+          expectedInputs.push({ type: 'audio' });
         }
 
         try {
           isolatedMultimodalSession = await this.factory.create({
             systemPrompt: this.currentSystemPrompt,
-            expectedInputs: [{ type: 'text' }, { type: 'image' }],
+            expectedInputs,
           });
           sessionToUse = isolatedMultimodalSession;
         } catch {
           try {
             isolatedMultimodalSession = await this.factory.create({
               systemPrompt: this.currentSystemPrompt,
-              expectedInputs: [{ type: 'image' }],
+              expectedInputs: expectedInputs.map((e) => ({ type: e.type })),
             });
             sessionToUse = isolatedMultimodalSession;
           } catch (e) {
@@ -414,25 +482,45 @@ class AIService {
 
       if (sessionToUse) {
         try {
-          const imagePayloadValue = (imageBitmap || imageFile)!;
           let promptPayload: AIPromptInput = effectivePromptText;
 
-          if (imageFile) {
+          if (hasMultimodalInput) {
             const textVal = memorySnippet
-              ? `[บริบทความจำก่อนหน้า]:\n${memorySnippet}\n\n${userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด'}`
-              : userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด';
+              ? `[บริบทความจำก่อนหน้า]:\n${memorySnippet}\n\n${userMessage || 'โปรดวิเคราะห์ข้อมูลภาพและเสียงนี้อย่างละเอียด'}`
+              : userMessage || 'โปรดวิเคราะห์ข้อมูลภาพและเสียงนี้อย่างละเอียด';
+
+            const parts: AIMultimodalPart[] = [];
+            if (textVal) {
+              parts.push({ type: 'text', value: textVal });
+            }
+
+            for (const img of imageList) {
+              let visualValue: AIVisualInput = img as AIVisualInput;
+              if (img instanceof Blob && typeof createImageBitmap === 'function') {
+                try {
+                  const bmp = await createImageBitmap(img);
+                  openedBitmaps.push(bmp);
+                  visualValue = bmp;
+                } catch {
+                  visualValue = img;
+                }
+              }
+              parts.push({ type: 'image', value: visualValue });
+            }
+
+            if (audioInput) {
+              parts.push({ type: 'audio', value: audioInput });
+            }
+
             promptPayload = [
               {
                 role: 'user',
-                content: [
-                  { type: 'text', value: textVal },
-                  { type: 'image', value: imagePayloadValue },
-                ],
+                content: parts,
               },
             ];
           }
 
-          const promptWithTimeout = async (payload: AIPromptInput, timeoutMs = 40000): Promise<string> => {
+          const promptWithTimeout = async (payload: AIPromptInput, timeoutMs = 45000): Promise<string> => {
             let timerId: ReturnType<typeof setTimeout> | undefined;
             const timeoutPromise = new Promise<never>((_, reject) => {
               timerId = setTimeout(() => reject(new Error('Prompt call timed out')), timeoutMs);
@@ -453,15 +541,9 @@ class AIService {
               try {
                 stream = sessionToUse.promptStreaming(promptPayload, { signal });
               } catch (payloadErr) {
-                if (imageFile) {
-                  const textVal = memorySnippet
-                    ? `[บริบทความจำก่อนหน้า]:\n${memorySnippet}\n\n${userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด'}`
-                    : userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด';
-                  const flatParts: Array<AIMultimodalPart> = [
-                    { type: 'text', value: textVal },
-                    { type: 'image', value: imagePayloadValue },
-                  ];
-                  stream = sessionToUse.promptStreaming(flatParts, { signal });
+                if (Array.isArray(promptPayload) && promptPayload[0] && typeof promptPayload[0] === 'object' && 'content' in promptPayload[0]) {
+                  const rawParts = (promptPayload[0] as { content: AIMultimodalPart[] }).content;
+                  stream = sessionToUse.promptStreaming(rawParts, { signal });
                 } else {
                   throw payloadErr;
                 }
@@ -489,12 +571,9 @@ class AIService {
               try {
                 rawAnswer = await promptWithTimeout(promptPayload);
               } catch {
-                if (imageFile) {
-                  const flatParts: Array<AIMultimodalPart> = [
-                    { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
-                    { type: 'image', value: imagePayloadValue },
-                  ];
-                  rawAnswer = await promptWithTimeout(flatParts);
+                if (Array.isArray(promptPayload) && promptPayload[0] && typeof promptPayload[0] === 'object' && 'content' in promptPayload[0]) {
+                  const rawParts = (promptPayload[0] as { content: AIMultimodalPart[] }).content;
+                  rawAnswer = await promptWithTimeout(rawParts);
                 } else {
                   throw streamErr;
                 }
@@ -510,12 +589,9 @@ class AIService {
             try {
               rawAnswer = await promptWithTimeout(promptPayload);
             } catch {
-              if (imageFile) {
-                const flatParts: Array<AIMultimodalPart> = [
-                  { type: 'text', value: userMessage || 'โปรดวิเคราะห์และอธิบายรูปภาพนี้อย่างละเอียด' },
-                  { type: 'image', value: imageFile },
-                ];
-                rawAnswer = await promptWithTimeout(flatParts);
+              if (Array.isArray(promptPayload) && promptPayload[0] && typeof promptPayload[0] === 'object' && 'content' in promptPayload[0]) {
+                const rawParts = (promptPayload[0] as { content: AIMultimodalPart[] }).content;
+                rawAnswer = await promptWithTimeout(rawParts);
               } else {
                 throw new Error('Prompt failed');
               }
@@ -541,15 +617,21 @@ class AIService {
             throw err;
           }
 
-          if (imageFile) {
-            console.warn('Multimodal vision prompt error:', err);
+          if (hasMultimodalInput) {
+            console.warn('Multimodal prompt error:', err);
+            const inputDesc = [
+              imageList.length > 0 ? `${imageList.length} รูปภาพ (Visual)` : '',
+              audioInput ? 'ไฟล์/สัญญาณเสียง (Audio)' : '',
+            ].filter(Boolean).join(' และ ');
+
             const errorMsg =
-              '⚠️ โมเดล Built-in AI บนเบราว์เซอร์นี้ยังไม่สามารถประมวลผลรูปภาพได้ในขณะนี้\n\n' +
+              `⚠️ **โมเดล Built-in AI บนเบราว์เซอร์นี้ยังไม่สามารถประมวลผล ${inputDesc} ได้ในขณะนี้**\n\n` +
               'กรุณาตรวจสอบการตั้งค่าใน Chrome ดังนี้:\n' +
               '1. เปิด `chrome://flags/#prompt-api-multimodal-input` (หรือ `#prompt-api-for-gemini-nano-multimodal-input`) → เลือก **Enabled**\n' +
               '2. เปิด `chrome://flags/#prompt-api` → เลือก **Enabled**\n' +
-              '3. เปิด `chrome://components` → กด **Check for update** ที่ Optimization Guide On Device Models\n' +
-              '4. ปิดแล้วเปิด Chrome ใหม่เพื่อโหลดโมเดล Vision เข้าสู่ระบบครับ';
+              '3. เปิด `chrome://flags/#optimization-guide-on-device-model` → เลือก **Enabled BypassPerfRequirement**\n' +
+              '4. เปิด `chrome://components` → กด **Check for update** ที่ Optimization Guide On Device Models\n' +
+              '5. ปิดแล้วเปิด Chrome ใหม่เพื่อโหลดโมเดล Multimodal (Vision & Audio) เข้าสู่ระบบครับ';
             onChunk(errorMsg);
             return errorMsg;
           }
@@ -577,9 +659,9 @@ class AIService {
           }
           throw err;
         } finally {
-          if (imageBitmap) {
+          for (const bmp of openedBitmaps) {
             try {
-              imageBitmap.close();
+              bmp.close();
             } catch {
               // ignore
             }
@@ -596,14 +678,16 @@ class AIService {
     }
 
     // Mock response fallback for development / browsers without flag enabled
-    return await this.mockStreamResponse(userMessage, onChunk, signal, imageFile);
+    return await this.mockStreamResponse(userMessage, onChunk, signal, imageList, audioInput, audioMeta);
   }
 
   private async mockStreamResponse(
     userMessage: string,
     onChunk: (accumulated: string) => void,
     signal?: AbortSignal,
-    imageFile?: File | Blob | null
+    images?: Array<File | Blob | AIVisualInput> | null,
+    audio?: AIAudioInput | null,
+    audioMeta?: { name?: string; size?: number; type?: string; duration?: number } | null
   ): Promise<string> {
     let memorySnippet = '';
     const startMarker = '[บริบทประวัติเดิมที่ถูกบีบอัด]:';
@@ -618,15 +702,43 @@ class AIService {
     }
 
     let reply: string;
-    if (imageFile) {
-      const fileName = imageFile instanceof File ? imageFile.name : 'image.png';
-      const fileSizeKb = (imageFile.size / 1024).toFixed(1);
-      const fileType = imageFile.type || 'image/png';
+    const hasImages = Boolean(images && images.length > 0);
+    const hasAudio = Boolean(audio);
+
+    if (hasImages || hasAudio) {
+      const visualSummary = hasImages
+        ? `- **Visual Inputs**: ตรวจพบ ${images!.length} ภาพ (${images!.map((img, i) => {
+            const name = img instanceof File ? img.name : `Visual_${i + 1}`;
+            const sizeKb = img instanceof Blob ? ` (${(img.size / 1024).toFixed(1)} KB)` : '';
+            return `\`${name}\`${sizeKb}`;
+          }).join(', ')})\n`
+        : '';
+
+      const audioSummary = hasAudio
+        ? `- **Audio Input**: ตรวจพบสัญญาณเสียง (\`${audioMeta?.name || 'Audio Recording'}\`${
+            audioMeta?.size ? `, ${(audioMeta.size / 1024).toFixed(1)} KB` : ''
+          }${audioMeta?.duration ? `, ~${Math.round(audioMeta.duration)}s` : ''})\n`
+        : '';
+
       reply =
-        `⚠️ **ไม่สามารถประมวลผลรูปภาพด้วยโมเดล On-Device ได้ในขณะนี้**\n\n` +
-        `- **ไฟล์ที่แนบมา**: \`${fileName}\` (${fileSizeKb} KB, \`${fileType}\`)\n` +
-        `- **สาเหตุ**: เซสชันของโมเดล AI บน Chrome ในเครื่องยังไม่พร้อมทำงานจริง\n\n` +
-        `กรุณาตรวจสอบว่าสถานะ Built-in AI ที่แถบด้านบนขึ้นเป็นสีเขียว เพื่อให้โมเดล AI ในเครื่องเป็นผู้มองเห็นและวิเคราะห์รูปภาพจริงครับ`;
+        `✨ **ได้รับข้อมูล Multimodal Input เรียบร้อยแล้ว (โหมดจำลอง Demo):**\n\n` +
+        visualSummary +
+        audioSummary +
+        `\n**คำสั่งจากผู้ใช้:** "${userMessage || 'โปรดวิเคราะห์ข้อมูลภาพและเสียงนี้'}"\n\n` +
+        `---\n\n` +
+        `### 🎯 การวิเคราะห์แบบ On-Device Multimodal:\n\n` +
+        (hasImages && images!.length > 1
+          ? `ระบบตรวจพบภาพทั้งหมด **${images!.length} ภาพ** สำหรับการเปรียบเทียบ (Visual Comparison):\n` +
+            `1. **ภาพที่ 1**: แสดงองค์ประกอบหลักและรายละเอียดภาพแรก\n` +
+            `2. **ภาพที่ 2**: แสดงองค์ประกอบเพิ่มเติมสำหรับการเปรียบเทียบ\n` +
+            `*ข้อสรุปการเปรียบเทียบ*: ทั้งสองภาพมีความสอดคล้องกันตามเงื่อนไขที่กำหนด\n\n`
+          : hasImages
+          ? `ระบบได้รับข้อมูลภาพขนาดสมบูรณ์ พร้อมส่งเข้า Gemini Nano Vision Pipeline เพื่อดึงข้อมูลเชิงลึก\n\n`
+          : '') +
+        (hasAudio
+          ? `ระบบได้รับข้อมูลเสียงสำหรับ Audio Processing เพื่อวิเคราะห์เสียงพูดหรือเสียงบันทึกโดยตรง\n\n`
+          : '') +
+        `> 💡 *หมายเหตุ (โหมดจำลอง Mock Mode)*: โค้ดฝั่ง Client-side ได้เตรียมโครงสร้างข้อมูล \`expectedInputs\` สำหรับ **Visual (${images?.length || 0})** และ **Audio (${hasAudio ? 1 : 0})** ตามมาตรฐาน WICG Prompt API เรียบร้อยแล้ว หากเปิด Flag \`#prompt-api-multimodal-input\` ใน Chrome Canary ระบบจะประมวลผลผ่านโมเดลจริงบนเครื่อง On-Device ทันทีครับ`;
     } else if (memorySnippet) {
       const isAskingMemory =
         userMessage.includes('จำได้') ||

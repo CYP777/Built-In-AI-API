@@ -6,32 +6,77 @@ export interface AILanguageModelCapabilities {
   maxTopK?: number;
 }
 
-export interface AILanguageModelCreateOptions {
-  systemPrompt?: string;
-  temperature?: number;
-  topK?: number;
-  samplingMode?: 'most-predictable' | 'predictable' | 'balanced' | 'creative' | 'most-creative';
-  expectedInputs?: Array<{ type: string; languages?: string[] }>;
-  signal?: AbortSignal;
-}
+export type AIVisualInput =
+  | HTMLImageElement
+  | SVGImageElement
+  | HTMLVideoElement
+  | HTMLCanvasElement
+  | ImageBitmap
+  | OffscreenCanvas
+  | VideoFrame
+  | Blob
+  | ImageData;
+
+export type AIAudioInput =
+  | AudioBuffer
+  | ArrayBufferView
+  | ArrayBuffer
+  | Blob;
 
 export type AIMultimodalPart =
   | { type: 'text'; value: string }
-  | { type: 'image'; value: Blob | File | ImageBitmap | HTMLImageElement | HTMLCanvasElement };
+  | { type: 'image'; value: AIVisualInput }
+  | { type: 'audio'; value: AIAudioInput };
 
 export interface AIMultimodalMessage {
   role?: 'user' | 'assistant' | 'system';
-  content: Array<AIMultimodalPart>;
+  content: Array<AIMultimodalPart> | string;
 }
 
-export type AIPromptInput = string | Array<AIMultimodalPart> | Array<AIMultimodalMessage>;
+export type AIPromptInput =
+  | string
+  | Array<AIMultimodalPart>
+  | Array<AIMultimodalMessage>;
 
 export interface ImageAttachment {
   url: string;
   name: string;
   size: number;
   type: string;
-  file?: File;
+  file?: File | Blob;
+  sourceType?: 'file' | 'canvas' | 'video-frame';
+}
+
+export interface AudioAttachment {
+  url: string;
+  name: string;
+  size: number;
+  type: string;
+  duration?: number;
+  blob?: Blob;
+  audioBuffer?: AudioBuffer;
+  arrayBuffer?: ArrayBuffer;
+}
+
+export interface AILanguageModelExpectedInput {
+  type: 'text' | 'image' | 'audio' | string;
+  languages?: string[];
+}
+
+export interface AILanguageModelExpectedOutput {
+  type: 'text' | string;
+  languages?: string[];
+}
+
+export interface AILanguageModelCreateOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  topK?: number;
+  samplingMode?: 'most-predictable' | 'predictable' | 'balanced' | 'creative' | 'most-creative';
+  expectedInputs?: AILanguageModelExpectedInput[];
+  expectedOutputs?: AILanguageModelExpectedOutput[];
+  signal?: AbortSignal;
+  monitor?: (m: EventTarget) => void;
 }
 
 export interface AILanguageModelSession {
