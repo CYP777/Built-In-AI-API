@@ -113,6 +113,29 @@ const AIPromptPage: React.FC = () => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
+  // Subscribe to ChatHistoryService (IndexedDB initialization and real-time sync)
+  useEffect(() => {
+    const unsubscribe = chatHistoryService.subscribe((updatedSessions) => {
+      setSessions(updatedSessions);
+    });
+
+    chatHistoryService.init().then((loadedSessions) => {
+      setSessions(loadedSessions);
+      const savedActiveId = chatHistoryService.getActiveSessionId();
+      if (!currentSessionIdRef.current && savedActiveId && loadedSessions.some((s) => s.id === savedActiveId)) {
+        setCurrentSessionId(savedActiveId);
+        const active = loadedSessions.find((s) => s.id === savedActiveId);
+        if (active) {
+          setMessages(active.messages);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   // Helper to read File into persistent Data URL and add to selectedImages
   const processImageFile = useCallback((file: File, fallbackName?: string) => {
     if (!file.type.startsWith('image/')) {
@@ -925,19 +948,20 @@ const AIPromptPage: React.FC = () => {
     const effectiveUserPrompt = promptText || defaultPromptDesc;
     let activeSystemPrompt = systemPromptRef.current || systemPrompt;
 
-    // 1. ตรวจสอบก่อนส่ง: หาก Token ใกล้หมด (เหลือ <= 800 หรือใช้ไป >= 88%)
+    // 1. ตรวจสอบก่อนส่ง: บีบอัดอัตโนมัติเฉพาะเมื่อ Token วิกฤตจริงๆ (เหลือ <= 350 หรือใช้ไป >= 96%) เพื่อให้ใช้งานได้คุ้มค่าที่สุด
     const activeRawMessages = (messagesRef.current || messages).filter(
       (m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()
     );
     const estPromptTokens = estimateTokens(effectiveUserPrompt) + 200;
-    const isTokensLow =
-      tokensLeft <= 800 ||
-      tokensSoFar + estPromptTokens >= maxTokens * 0.88 ||
-      contextPercentage >= 88;
+    const isTokensCritical =
+      tokensLeft <= 350 ||
+      (tokensLeft - estPromptTokens < 250) ||
+      tokensSoFar + estPromptTokens >= maxTokens * 0.96 ||
+      contextPercentage >= 96;
 
-    if (isTokensLow) {
-      // หากหน่วยความจำเต็มหรือเกือบเต็ม (9,216/9,216 หรือ tokensLeft <= 150) และไม่มีข้อความให้บีบอัดแล้ว
-      if ((tokensLeft <= 150 || tokensSoFar >= maxTokens) && activeRawMessages.length < 2) {
+    if (isTokensCritical) {
+      // หากหน่วยความจำเต็มหรือเกือบเต็ม (9,216/9,216 หรือ tokensLeft <= 100) และไม่มีข้อความให้บีบอัดแล้ว
+      if ((tokensLeft <= 100 || tokensSoFar >= maxTokens) && activeRawMessages.length < 2) {
         const confirmNewChat = window.confirm(
           `บริบทการสนทนาเต็มแล้ว (${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens)\n\nระบบไม่สามารถรับคำสั่งเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตา On-Device Model\n\nต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้เลยหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)`
         );
@@ -1117,7 +1141,7 @@ const AIPromptPage: React.FC = () => {
       // 2. ปลดสถานะ isGenerating เป็น false ทันที เพื่อไม่ให้ปุ่มหรือแถบสถานะด้านล่างค้าง "AI กำลังประมวลผล..."
       setIsGenerating(false);
 
-      // ตรวจสอบหลังตอบเสร็จ: หาก Token เหลือน้อย (tokensLeft <= 800 หรือ tokensSoFar >= maxTokens * 0.88) และมีประวัติเดิม ให้บีบอัดอัตโนมัติเพื่อเตรียมพร้อมรอบต่อไป
+      // ตรวจสอบหลังตอบเสร็จ: บีบอัดอัตโนมัติเฉพาะเมื่อ Token วิกฤตจริงๆ (tokensLeft <= 350 หรือ tokensSoFar >= maxTokens * 0.96)
       const latestMessages = messagesRef.current;
       const postTotalTokens =
         latestMessages
@@ -1134,7 +1158,7 @@ const AIPromptPage: React.FC = () => {
       );
 
       if (
-        (postTokensUsage.tokensLeft <= 800 || postTokensUsage.tokensSoFar >= maxTokens * 0.88) &&
+        (postTokensUsage.tokensLeft <= 350 || postTokensUsage.tokensSoFar >= maxTokens * 0.96) &&
         priorToCompact.length >= 2 &&
         !controller.signal.aborted
       ) {
@@ -1166,7 +1190,7 @@ const AIPromptPage: React.FC = () => {
         errMessage.includes('limit') ||
         errMessage.includes('exhaust') ||
         errMessage.includes('max') ||
-        errTokensUsage.tokensLeft <= 800;
+        errTokensUsage.tokensLeft <= 400;
 
       const priorToCompact = latestMessages.filter(
         (m) =>
@@ -1606,13 +1630,25 @@ const AIPromptPage: React.FC = () => {
       {/* Floating Bottom Input Area */}
       <footer className="relative bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent pt-2 pb-3.5 px-3 sm:px-6 shrink-0">
         <div className="mx-auto max-w-3xl sm:max-w-4xl space-y-2">
-          {/* Critical Context Warning (Only appears when context is near-full >= 88% or tokensLeft <= 800) */}
-          {(contextPercentage >= 88 || tokensLeft <= 800) && messages.length > 0 && (
-            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-2xl bg-amber-50/95 border border-amber-200/90 px-3.5 py-2 text-xs text-amber-900 shadow-sm shadow-amber-500/5 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {/* Context Notice / Warning: แจ้งเตือนเมื่อแตะ >= 85% หรือเหลือ <= 1200T ให้ผู้ใช้ทราบและเลือกบีบอัดเองได้ตามต้องการ */}
+          {(contextPercentage >= 85 || tokensLeft <= 1200) && messages.length > 0 && (
+            <div
+              className={`flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-2xl border px-3.5 py-2 text-xs shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200 ${
+                contextPercentage >= 95
+                  ? 'bg-rose-50/95 border-rose-200/90 text-rose-900 shadow-rose-500/5'
+                  : 'bg-amber-50/95 border-amber-200/90 text-amber-900 shadow-amber-500/5'
+              }`}
+            >
               <div className="flex items-center gap-2 min-w-0">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-                <span className="font-semibold text-amber-900">บริบทความจำใกล้เต็ม:</span>
-                <span className="text-amber-800 font-medium">
+                <AlertTriangle
+                  className={`h-4 w-4 shrink-0 ${
+                    contextPercentage >= 95 ? 'text-rose-600' : 'text-amber-600'
+                  }`}
+                />
+                <span className="font-semibold">
+                  {contextPercentage >= 95 ? 'บริบทความจำใกล้เต็มขั้นวิกฤต:' : 'บริบทความจำเริ่มสูง:'}
+                </span>
+                <span className="font-medium opacity-90">
                   {tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T ({contextPercentage}%) • เหลือ {tokensLeft.toLocaleString()} Tokens
                 </span>
               </div>
@@ -1931,9 +1967,9 @@ const AIPromptPage: React.FC = () => {
                   <span className="hidden sm:inline">{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T</span>
                   <span
                     className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold ${
-                      contextPercentage >= 88
+                      contextPercentage >= 95
                         ? 'bg-rose-100 text-rose-700'
-                        : contextPercentage >= 70
+                        : contextPercentage >= 80
                         ? 'bg-amber-100 text-amber-700'
                         : 'bg-emerald-100 text-emerald-700'
                     }`}

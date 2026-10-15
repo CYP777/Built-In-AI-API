@@ -1,141 +1,124 @@
 import type { ChatSession } from '../types/chat-history';
 import type { Message } from '../components/ChatMessage';
+import {
+  saveSessionToDB,
+  deleteSessionFromDB,
+  clearAllSessionsFromDB,
+  migrateFromLocalStorage,
+  getStorageEstimate,
+  sanitizeMessageForIndexedDB,
+  type StorageEstimateInfo,
+} from './db-service';
 
-const STORAGE_KEY = 'chrome_ai_chat_sessions_v1';
 const ACTIVE_SESSION_ID_KEY = 'chrome_ai_active_session_id';
+const LEGACY_STORAGE_KEY = 'chrome_ai_chat_sessions_v1';
 
-/**
- * Sanitizes messages for localStorage storage.
- * Strips non-serializable File/Blob/AudioBuffer objects from attachments to avoid JSON errors and reduce storage size.
- */
-function sanitizeMessageForStorage(message: Message): Message {
-  const result: Message = { ...message };
+class ChatHistoryService {
+  private sessionsCache: ChatSession[] = [];
+  private isInitialized = false;
+  private initPromise: Promise<ChatSession[]> | null = null;
+  private listeners = new Set<(sessions: ChatSession[]) => void>();
 
-  if (result.imageAttachment) {
-    const safeAttachment = { ...result.imageAttachment };
-    delete safeAttachment.file;
-    result.imageAttachment = safeAttachment;
+  constructor() {
+    // Initial sync bootstrap from localStorage to prevent empty flicker on first paint
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            this.sessionsCache = parsed;
+          }
+        }
+      } catch {
+        // ignore initial cache read error
+      }
+
+      // Automatically trigger async initialization with IndexedDB
+      this.init().catch((err) => {
+        console.warn('Initial IndexedDB initialization error:', err);
+      });
+    }
   }
 
-  if (result.imageAttachments && Array.isArray(result.imageAttachments)) {
-    result.imageAttachments = result.imageAttachments.map((img) => {
-      const safe = { ...img };
-      delete safe.file;
-      return safe;
+  /**
+   * Initializes IndexedDB, performs migration from legacy localStorage if necessary,
+   * and populates the in-memory cache.
+   */
+  public async init(): Promise<ChatSession[]> {
+    if (this.isInitialized) return this.sessionsCache;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = (async () => {
+      try {
+        // Run migration from localStorage if needed, or read from IndexedDB
+        const sessions = await migrateFromLocalStorage();
+        this.sessionsCache = sessions;
+        this.isInitialized = true;
+        this.notifyListeners();
+        return sessions;
+      } catch (err) {
+        console.warn('Failed to initialize IndexedDB sessions, falling back to cache:', err);
+        this.isInitialized = true;
+        return this.sessionsCache;
+      } finally {
+        this.initPromise = null;
+      }
+    })();
+
+    return this.initPromise;
+  }
+
+  /**
+   * Subscribes a listener callback to session updates.
+   * Returns an unsubscribe function.
+   */
+  public subscribe(listener: (sessions: ChatSession[]) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    const copy = [...this.sessionsCache];
+    this.listeners.forEach((listener) => {
+      try {
+        listener(copy);
+      } catch (err) {
+        console.error('Error in session update listener:', err);
+      }
     });
   }
 
-  if (result.audioAttachment) {
-    const safeAudio = { ...result.audioAttachment };
-    delete safeAudio.blob;
-    delete safeAudio.audioBuffer;
-    delete safeAudio.arrayBuffer;
-    result.audioAttachment = safeAudio;
-  }
-
-  return result;
-}
-
-class ChatHistoryService {
   /**
-   * Loads all chat sessions from localStorage, sorted by updatedAt descending.
+   * Returns all chat sessions synchronously from in-memory cache,
+   * sorted by updatedAt descending.
    */
   public getAllSessions(): ChatSession[] {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const parsed: ChatSession[] = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
+    return [...this.sessionsCache];
+  }
 
-      // Deduplicate by ID and accidental near-simultaneous duplicate creations
-      const seenIds = new Set<string>();
-      const uniqueSessions: ChatSession[] = [];
-      let hadDuplicates = false;
-
-      // Sort by createdAt ascending first to identify consecutive identical duplicates
-      const sorted = [...parsed].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-
-      for (let i = 0; i < sorted.length; i++) {
-        const s = sorted[i];
-        if (!s || !s.id || seenIds.has(s.id)) {
-          hadDuplicates = true;
-          continue;
-        }
-
-        // Check if previous session is an accidental duplicate (same title, created within 5s)
-        const prev = uniqueSessions[uniqueSessions.length - 1];
-        if (
-          prev &&
-          prev.title === s.title &&
-          Math.abs((prev.createdAt || 0) - (s.createdAt || 0)) < 5000 &&
-          prev.messages?.length === s.messages?.length
-        ) {
-          hadDuplicates = true;
-          continue;
-        }
-
-        seenIds.add(s.id);
-        uniqueSessions.push(s);
-      }
-
-      // If accidental duplicates were found, re-save the cleaned array
-      if (hadDuplicates) {
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(uniqueSessions));
-        } catch {
-          // ignore
-        }
-      }
-
-      return uniqueSessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    } catch (err) {
-      console.warn('Failed to read chat history from localStorage:', err);
-      return [];
+  /**
+   * Ensures IndexedDB is fully initialized before returning sessions.
+   */
+  public async getAllSessionsAsync(): Promise<ChatSession[]> {
+    if (!this.isInitialized) {
+      return this.init();
     }
+    return [...this.sessionsCache];
   }
 
   /**
    * Retrieves a specific session by its ID.
    */
   public getSession(id: string): ChatSession | null {
-    const sessions = this.getAllSessions();
-    return sessions.find((s) => s.id === id) || null;
+    return this.sessionsCache.find((s) => s.id === id) || null;
   }
 
   /**
-   * Persists the sessions array to localStorage safely.
-   * If storage quota is exceeded, attempts to evict the oldest sessions.
-   */
-  public saveAllSessions(sessions: ChatSession[]): boolean {
-    if (typeof window === 'undefined') return false;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-      return true;
-    } catch (err: unknown) {
-      console.warn('LocalStorage save error, attempting quota recovery:', err);
-      // If quota exceeded, trim older sessions one by one
-      if (sessions.length > 3) {
-        const trimmed = sessions.slice(0, Math.floor(sessions.length * 0.75));
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-          return true;
-        } catch {
-          // If still failing, keep only latest 2
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 2)));
-            return true;
-          } catch {
-            return false;
-          }
-        }
-      }
-      return false;
-    }
-  }
-
-  /**
-   * Creates a new chat session and saves it to history.
+   * Creates a new chat session, prepends it to memory cache,
+   * and asynchronously persists it to IndexedDB.
    */
   public createSession(
     title = 'บทสนทนาใหม่',
@@ -145,7 +128,7 @@ class ChatHistoryService {
     const id = `session-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const now = Date.now();
 
-    const sanitizedMessages = initialMessages.map(sanitizeMessageForStorage);
+    const sanitizedMessages = initialMessages.map(sanitizeMessageForIndexedDB);
 
     const newSession: ChatSession = {
       id,
@@ -158,39 +141,37 @@ class ChatHistoryService {
       updatedAt: now,
     };
 
-    const existing = this.getAllSessions();
-    const updated = [newSession, ...existing];
-    this.saveAllSessions(updated);
+    // Prepend to cache
+    this.sessionsCache = [newSession, ...this.sessionsCache.filter((s) => s.id !== id)];
     this.setActiveSessionId(id);
+    this.notifyListeners();
+
+    // Persist to IndexedDB
+    saveSessionToDB(newSession).catch((err) => {
+      console.error('Failed to persist new session to IndexedDB:', err);
+    });
 
     return newSession;
   }
 
   /**
-   * Saves or updates a session.
+   * Saves or updates a session in cache and persists to IndexedDB.
    */
   public saveSession(session: ChatSession): void {
-    const existing = this.getAllSessions();
-    const sanitizedMessages = session.messages.map(sanitizeMessageForStorage);
+    const sanitizedMessages = session.messages.map(sanitizeMessageForIndexedDB);
     const updatedSession: ChatSession = {
       ...session,
       messages: sanitizedMessages,
       updatedAt: Date.now(),
     };
 
-    const index = existing.findIndex((s) => s.id === session.id);
-    let updatedList: ChatSession[];
+    const remaining = this.sessionsCache.filter((s) => s.id !== session.id);
+    this.sessionsCache = [updatedSession, ...remaining];
+    this.notifyListeners();
 
-    if (index >= 0) {
-      updatedList = [
-        updatedSession,
-        ...existing.filter((s) => s.id !== session.id),
-      ];
-    } else {
-      updatedList = [updatedSession, ...existing];
-    }
-
-    this.saveAllSessions(updatedList);
+    saveSessionToDB(updatedSession).catch((err) => {
+      console.error('Failed to save session to IndexedDB:', err);
+    });
   }
 
   /**
@@ -201,11 +182,10 @@ class ChatHistoryService {
     messages: Message[],
     systemPrompt?: string
   ): void {
-    const existing = this.getAllSessions();
-    const target = existing.find((s) => s.id === id);
+    const target = this.sessionsCache.find((s) => s.id === id);
     if (!target) return;
 
-    const sanitizedMessages = messages.map(sanitizeMessageForStorage);
+    const sanitizedMessages = messages.map(sanitizeMessageForIndexedDB);
     target.messages = sanitizedMessages;
     target.updatedAt = Date.now();
     if (systemPrompt !== undefined) {
@@ -225,52 +205,64 @@ class ChatHistoryService {
     }
 
     // Move updated session to top
-    const remaining = existing.filter((s) => s.id !== id);
-    this.saveAllSessions([target, ...remaining]);
+    const remaining = this.sessionsCache.filter((s) => s.id !== id);
+    this.sessionsCache = [target, ...remaining];
+    this.notifyListeners();
+
+    saveSessionToDB(target).catch((err) => {
+      console.error('Failed to update session messages in IndexedDB:', err);
+    });
   }
 
   /**
    * Renames a chat session.
    */
   public renameSession(id: string, newTitle: string): void {
-    const existing = this.getAllSessions();
-    const target = existing.find((s) => s.id === id);
+    const target = this.sessionsCache.find((s) => s.id === id);
     if (!target) return;
 
     target.title = newTitle.trim() || 'บทสนทนาไม่มีชื่อ';
     target.updatedAt = Date.now();
-    this.saveAllSessions(existing);
+    this.notifyListeners();
+
+    saveSessionToDB(target).catch((err) => {
+      console.error('Failed to rename session in IndexedDB:', err);
+    });
   }
 
   /**
-   * Deletes a specific chat session.
+   * Deletes a specific chat session from cache and IndexedDB.
    */
   public deleteSession(id: string): void {
-    const existing = this.getAllSessions();
-    const filtered = existing.filter((s) => s.id !== id);
-    this.saveAllSessions(filtered);
+    this.sessionsCache = this.sessionsCache.filter((s) => s.id !== id);
 
     if (this.getActiveSessionId() === id) {
-      const nextActive = filtered.length > 0 ? filtered[0].id : null;
+      const nextActive = this.sessionsCache.length > 0 ? this.sessionsCache[0].id : null;
       this.setActiveSessionId(nextActive);
     }
+
+    this.notifyListeners();
+
+    deleteSessionFromDB(id).catch((err) => {
+      console.error('Failed to delete session from IndexedDB:', err);
+    });
   }
 
   /**
-   * Clears all chat history.
+   * Clears all chat history from cache and IndexedDB.
    */
   public clearAllSessions(): void {
-    if (typeof window === 'undefined') return;
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(ACTIVE_SESSION_ID_KEY);
-    } catch (err) {
-      console.warn('Failed to clear sessions:', err);
-    }
+    this.sessionsCache = [];
+    this.setActiveSessionId(null);
+    this.notifyListeners();
+
+    clearAllSessionsFromDB().catch((err) => {
+      console.error('Failed to clear sessions from IndexedDB:', err);
+    });
   }
 
   /**
-   * Gets currently active session ID.
+   * Gets currently active session ID from localStorage.
    */
   public getActiveSessionId(): string | null {
     if (typeof window === 'undefined') return null;
@@ -278,7 +270,7 @@ class ChatHistoryService {
   }
 
   /**
-   * Sets currently active session ID.
+   * Sets currently active session ID in localStorage.
    */
   public setActiveSessionId(id: string | null): void {
     if (typeof window === 'undefined') return;
@@ -287,6 +279,13 @@ class ChatHistoryService {
     } else {
       localStorage.removeItem(ACTIVE_SESSION_ID_KEY);
     }
+  }
+
+  /**
+   * Retrieves browser storage usage and quota information for IndexedDB.
+   */
+  public async getStorageUsage(): Promise<StorageEstimateInfo | null> {
+    return getStorageEstimate();
   }
 }
 

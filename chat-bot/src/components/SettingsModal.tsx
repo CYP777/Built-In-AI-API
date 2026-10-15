@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
-import { X, Sliders, HelpCircle, ShieldAlert } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { X, Sliders, HelpCircle, ShieldAlert, Database } from 'lucide-react';
 import { estimateTokens } from '../services/ai-service';
+import { chatHistoryService } from '../services/chat-history-service';
+import type { StorageEstimateInfo } from '../services/db-service';
 import { SteppedRangeSlider } from './SteppedRangeSlider';
 
 export interface SettingsModalProps {
@@ -39,6 +41,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const systemPromptTokens = useMemo(() => {
     return estimateTokens(systemPrompt);
   }, [systemPrompt]);
+
+  const [storageInfo, setStorageInfo] = useState<StorageEstimateInfo | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      chatHistoryService.getStorageUsage().then((info) => {
+        if (info) setStorageInfo(info);
+      });
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -154,6 +166,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               />
               <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
             </label>
+          </div>
+
+          {/* On-Device Database Info Box */}
+          <div className="rounded-xl bg-slate-50 border border-slate-200/80 p-4 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-emerald-600" />
+                <span className="text-xs font-bold text-slate-800">ฐานข้อมูลในเครื่อง (On-Device Storage)</span>
+              </div>
+              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                IndexedDB • ความจุสูง
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              บันทึกข้อความ รูปภาพ และไฟล์เสียงทั้งหมดลงบนเบราว์เซอร์ของคุณโดยตรง (100% Private On-Device) ไม่ส่งข้อมูลไปคลาวด์ และไม่มีค่าบริการ
+            </p>
+            {storageInfo && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                  <span>พื้นที่ที่ใช้งาน: {storageInfo.usageFormatted}</span>
+                  <span className="text-slate-400">จากโควตาทั้งหมด {storageInfo.quotaFormatted}</span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.max(storageInfo.percentage, 0.5)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Built-in AI Guide Box */}
