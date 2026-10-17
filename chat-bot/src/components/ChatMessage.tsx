@@ -32,6 +32,73 @@ interface ChatMessageProps {
   message: Message;
 }
 
+function extractNodeText(node: React.ReactNode): string {
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractNodeText).join('');
+  if (React.isValidElement(node) && node.props && (node.props as { children?: React.ReactNode }).children) {
+    return extractNodeText((node.props as { children?: React.ReactNode }).children);
+  }
+  return '';
+}
+
+const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = ({ className, children }) => {
+  const [copied, setCopied] = useState(false);
+  const match = /language-(\w+)/.exec(className || '');
+  const language = match ? match[1] : '';
+
+  const handleCopyCode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const textToCopy = extractNodeText(children).replace(/\n$/, '');
+    navigator.clipboard.writeText(textToCopy);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative my-3.5 rounded-2xl overflow-hidden border border-slate-800/80 bg-slate-950 text-slate-100 shadow-md shadow-black/15 group/code">
+      {/* Header bar with decorative macOS dots and language badge */}
+      <div className="flex items-center justify-between px-3.5 py-2 border-b border-slate-800/80 bg-slate-900/90 text-xs text-slate-400 select-none">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80 inline-block" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80 inline-block" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80 inline-block" />
+          </div>
+          {language && (
+            <span className="font-mono text-[11px] font-semibold text-slate-300 ml-1.5 uppercase tracking-wider">
+              {language}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleCopyCode}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 cursor-pointer"
+          title="คัดลอกโค้ดนี้"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-400" />
+              <span className="text-emerald-400 font-semibold">คัดลอกแล้ว</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>คัดลอกโค้ด</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Pre code content */}
+      <pre className="overflow-x-auto p-4 text-[13px] font-mono leading-relaxed text-slate-100 selection:bg-emerald-500/30">
+        <code>{children}</code>
+      </pre>
+    </div>
+  );
+};
+
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -81,11 +148,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <span className="text-xs font-semibold tracking-wider text-slate-800">
               Conversation compacted
             </span>
-            {message.compressionStats && (
-              <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded">
-                -{message.compressionStats.percentageSaved}%
-              </span>
-            )}
             <ChevronDown
               className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
                 isExpanded ? 'rotate-180 text-emerald-600' : ''
@@ -100,15 +162,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           const cleanedText = cleanCompressedSummary(message.text);
           return (
             <div className="my-2.5 px-2 sm:px-4 py-1 text-xs text-slate-600 leading-relaxed min-w-0 max-w-full wrap-break-word">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-400 mb-2 min-w-0">
+              <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400 mb-2 min-w-0">
                 <span className="text-emerald-700/90 font-semibold min-w-0">
                   สรุปบริบทเดิมที่บันทึกลงหน่วยความจำ:
                 </span>
-                {message.compressionStats && (
-                  <span className="font-mono text-slate-400 text-[10px] shrink-0">
-                    ลดลง {message.compressionStats.savedTokens.toLocaleString()} tokens
-                  </span>
-                )}
               </div>
               <div className="min-w-0 max-w-full text-slate-600 leading-relaxed wrap-break-word space-y-1.5">
                 <Markdown
@@ -229,15 +286,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                       setActiveLightboxImage(img);
                       setIsLightboxOpen(true);
                     }}
-                    className="group/img block relative overflow-hidden rounded-xl border border-white/20 bg-black/10 hover:border-white/50 hover:shadow-md transition cursor-zoom-in text-left"
+                    className={`group/img block relative overflow-hidden rounded-xl border border-white/20 bg-slate-900/30 hover:border-white/50 hover:shadow-md transition cursor-zoom-in text-left ${
+                      allImages.length === 1 ? 'aspect-video w-full max-h-64' : 'aspect-4/3 w-full'
+                    }`}
                     title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
                   >
                     <img
                       src={img.url}
                       alt={img.name}
-                      className={`w-full rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02] ${
-                        allImages.length === 1 ? 'max-h-60' : 'h-32 sm:h-36'
-                      }`}
+                      loading="lazy"
+                      decoding="async"
+                      className="h-full w-full rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02]"
                     />
                     <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="bg-black/70 text-white text-xs px-2 py-0.5 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-sm">
@@ -263,7 +322,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           </div>
 
           {/* Timestamp */}
-          <div className="mt-1 flex items-center justify-end text-[10px] text-emerald-100/70">
+          <div className="mt-1 flex items-center justify-end text-[10px] text-emerald-50 font-medium tracking-tight">
             <span>{message.timestamp}</span>
           </div>
         </div>
@@ -359,11 +418,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-linear-to-tr from-emerald-600 to-teal-500 text-white shadow-xs">
               <Sparkles className="h-3.5 w-3.5" />
             </div>
-            <span className="text-xs font-bold text-slate-800 tracking-tight">
-              AI ผู้ช่วย
-            </span>
-            <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200/60">
-              On-Device
+            <span className="text-xs font-bold text-slate-900 tracking-tight">
+              ผู้ช่วย AI
             </span>
             <span className="text-[11px] text-slate-400 ml-1">
               {message.timestamp}
@@ -374,8 +430,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {message.text && (
             <button
               onClick={handleCopy}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
-              title="คัดลอกคำตอบ"
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              title="คัดลอกข้อความคำตอบ"
             >
               {copied ? (
                 <>
@@ -385,7 +441,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               ) : (
                 <>
                   <Copy className="h-3 w-3" />
-                  <span>คัดลอก</span>
+                  <span>คัดลอกข้อความ</span>
                 </>
               )}
             </button>
@@ -396,25 +452,25 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {message.isSafetyAdvisory && (
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 text-xs font-semibold border border-amber-200 shadow-2xs">
             <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>นโยบายความปลอดภัย AI (Content Safety Advisory)</span>
+            <span>คำแนะนำด้านความปลอดภัย (Content Safety Advisory)</span>
           </div>
         )}
 
         {/* Thinking / Typing state before first token arrives */}
         {!message.text && message.isStreaming && (
           <div className="flex items-center gap-2.5 py-2 text-slate-500 select-none animate-in fade-in duration-200">
-            <span className="text-xs font-medium text-slate-500">AI กำลังคิด...</span>
+            <span className="text-xs font-medium text-slate-600">กำลังประมวลผลคำตอบ...</span>
             <div className="flex items-center gap-1 ml-0.5">
               <span
-                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce will-change-transform"
                 style={{ animationDelay: '0ms' }}
               />
               <span
-                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce will-change-transform"
                 style={{ animationDelay: '150ms' }}
               />
               <span
-                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce"
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce will-change-transform"
                 style={{ animationDelay: '300ms' }}
               />
             </div>
@@ -424,7 +480,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Fallback when AI response is empty and finished */}
         {!message.text && !message.isStreaming && (
           <div className="py-2 text-xs text-slate-400 italic">
-            (ไม่มีข้อความตอบกลับ)
+            (ไม่มีข้อความตอบกลับจากระบบ)
           </div>
         )}
 
@@ -469,41 +525,30 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                 li: ({ children }) => (
                   <li className="leading-relaxed wrap-break-word">{children}</li>
                 ),
-                pre: ({ children, ...props }) => (
-                  <div className="relative my-3 rounded-2xl overflow-hidden border border-slate-800/90 bg-slate-950 text-slate-100 shadow-md">
-                    <pre
-                      className="overflow-x-auto p-3.5 sm:p-4 text-xs font-mono leading-relaxed"
-                      {...props}
-                    >
-                      {children}
-                    </pre>
-                  </div>
-                ),
+                pre: ({ children }) => <>{children}</>,
                 code: ({ className, children, ...props }) => {
                   const isInline =
                     !className && typeof children === 'string' && !children.includes('\n');
                   return isInline ? (
                     <code
-                      className="rounded-md border border-slate-200/80 bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-emerald-800 break-all"
+                      className="rounded-md border border-slate-200/90 bg-slate-100/90 px-1.5 py-0.5 text-[12.5px] font-mono text-emerald-800 font-medium break-all"
                       {...props}
                     >
                       {children}
                     </code>
                   ) : (
-                    <code className="font-mono text-xs break-all" {...props}>
-                      {children}
-                    </code>
+                    <CodeBlock className={className}>{children}</CodeBlock>
                   );
                 },
                 table: ({ children }) => (
-                  <div className="my-3 max-w-full overflow-x-auto rounded-xl border border-slate-200 shadow-2xs">
+                  <div className="my-3.5 max-w-full overflow-x-auto rounded-xl border border-slate-200/90 bg-white shadow-2xs">
                     <table className="min-w-full border-collapse text-left text-xs">
                       {children}
                     </table>
                   </div>
                 ),
                 thead: ({ children }) => (
-                  <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                  <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200/80">
                     {children}
                   </thead>
                 ),
@@ -513,16 +558,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                   </tbody>
                 ),
                 tr: ({ children }) => (
-                  <tr className="hover:bg-slate-50/80 transition">{children}</tr>
+                  <tr className="hover:bg-emerald-50/30 transition-colors">{children}</tr>
                 ),
                 th: ({ children }) => (
-                  <th className="px-3 py-2 font-semibold text-slate-800">{children}</th>
+                  <th className="px-3.5 py-2.5 font-semibold text-slate-800 tracking-tight">{children}</th>
                 ),
                 td: ({ children }) => (
-                  <td className="px-3 py-2 text-slate-700">{children}</td>
+                  <td className="px-3.5 py-2.5 text-slate-700 leading-relaxed">{children}</td>
                 ),
                 blockquote: ({ children }) => (
-                  <blockquote className="border-l-3 border-emerald-500 bg-slate-50/70 py-1.5 pl-3.5 pr-3 my-2.5 text-slate-600 italic rounded-r-xl">
+                  <blockquote className="my-3 rounded-xl border-l-4 border-emerald-500 bg-slate-100/75 pl-4 pr-3.5 py-2.5 text-slate-800 text-[13.5px] leading-relaxed shadow-2xs font-normal">
                     {children}
                   </blockquote>
                 ),
@@ -555,7 +600,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             </Markdown>
 
             {message.isStreaming && (
-              <span className="inline-block h-4 w-1.5 ml-1 animate-pulse bg-emerald-500 align-middle rounded-full" />
+              <span className="inline-block h-4 w-1.5 ml-1 animate-pulse bg-emerald-500 align-middle rounded-full will-change-opacity" />
             )}
           </div>
         )}
