@@ -169,11 +169,11 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
 
       {/* Instagram-style Hover Rail & Expandable Sidebar */}
       <aside
+        id="chat-history-sidebar"
+        aria-label="ประวัติการแชท"
         onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => {
-          setIsHovered(false);
-        }}
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200/80 bg-white/95 text-slate-800 backdrop-blur-md transition-all duration-300 ease-in-out ${
+        onMouseLeave={() => setIsHovered(false)}
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200/80 bg-white/95 text-slate-800 backdrop-blur-md transition-all duration-300 ease-in-out will-change-[width,transform] ${
           isOpen
             ? 'w-72 sm:w-80 translate-x-0 shadow-xl md:shadow-none'
             : isHovered
@@ -182,19 +182,17 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         }`}
       >
         {!isExpanded ? (
-          <div className="hidden md:flex h-full w-16 flex-col items-center justify-start gap-2.5 py-3.5 select-none">
+          <div className="hidden md:flex h-full w-16 flex-col items-center justify-start gap-2.5 py-3.5 select-none animate-in fade-in duration-150">
             {/* Pin/Toggle Sidebar Button */}
             <button
               type="button"
               onClick={() => {
-                if (onTogglePin) {
-                  onTogglePin();
-                } else {
-                  setIsHovered(true);
-                }
+                if (onTogglePin) onTogglePin();
+                else setIsHovered(true);
               }}
+              aria-label={isOpen ? 'พับเก็บแถบประวัติ' : 'เปิดและปักหมุดแถบประวัติ'}
               title={isOpen ? 'พับเก็บแถบประวัติ' : 'เปิดและปักหมุดแถบประวัติ'}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-emerald-700 active:scale-95 transition-all cursor-pointer"
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-emerald-700 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             >
               <PanelLeft className="h-4.5 w-4.5" />
             </button>
@@ -205,8 +203,9 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
             <button
               type="button"
               onClick={onNewChat}
+              aria-label="เริ่มบทสนทนาใหม่"
               title="เริ่มบทสนทนาใหม่"
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-2xs hover:bg-emerald-700 active:scale-95 transition-all cursor-pointer"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-600 text-white shadow-sm shadow-emerald-950/20 hover:brightness-105 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             >
               <SquarePen className="h-4.5 w-4.5" />
             </button>
@@ -218,8 +217,9 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 if (onTogglePin) onTogglePin();
                 else setIsHovered(true);
               }}
+              aria-label={`ดูประวัติการแชททั้งหมด (${sessions.length} รายการ)`}
               title={`ดูประวัติการแชททั้งหมด (${sessions.length} รายการ)`}
-              className="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition cursor-pointer"
+              className="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-emerald-50 hover:text-emerald-700 active:scale-95 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             >
               <History className="h-4.5 w-4.5" />
               {sessions.length > 0 && (
@@ -237,8 +237,9 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 setIsHovered(true);
                 setTimeout(() => searchInputRef.current?.focus(), 150);
               }}
+              aria-label="ค้นหาประวัติการแชท"
               title="ค้นหาประวัติการแชท"
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 active:scale-95 transition cursor-pointer"
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 active:scale-95 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             >
               <Search className="h-4.5 w-4.5" />
             </button>
@@ -265,7 +266,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     onClose();
                   }}
                   title="พับเก็บแถบประวัติ"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition active:scale-95 cursor-pointer"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                 >
                   <PanelLeftClose className="h-4 w-4" />
                 </button>
@@ -282,10 +283,10 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     onClose();
                   }
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:scale-98 transition-all cursor-pointer"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-linear-to-r from-emerald-600 via-emerald-600 to-teal-600 px-3.5 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-600/20 hover:shadow-lg hover:shadow-emerald-600/30 hover:brightness-105 active:scale-98 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
               >
                 <SquarePen className="h-4 w-4" />
-                <span>เริ่มบทสนทนาใหม่</span>
+                <span>เริ่มการสนทนาใหม่</span>
               </button>
 
               {/* Search Input */}
@@ -296,8 +297,8 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ค้นหาประวัติการแชท..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-1.5 pl-8 pr-7 text-xs text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden transition-all"
+                  placeholder="ค้นหาบทสนทนา..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-1.5 pl-8 pr-7 text-xs text-slate-800 placeholder-slate-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden transition-all shadow-2xs"
                 />
                 {searchQuery && (
                   <button
@@ -318,19 +319,19 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 mb-3">
                     <MessageSquare className="h-6 w-6" />
                   </div>
-                  <p className="text-xs font-medium text-slate-600">
-                    {searchQuery ? 'ไม่พบบทสนทนาที่ค้นหา' : 'ยังไม่มีประวัติการแชท'}
+                  <p className="text-xs font-medium text-slate-700">
+                    {searchQuery ? 'ไม่พบบทสนทนาที่ค้นหา' : 'ยังไม่มีประวัติการสนทนา'}
                   </p>
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-slate-400 max-w-45 leading-relaxed">
                     {searchQuery
-                      ? 'ลองค้นหาด้วยคำอื่น หรือล้างคำค้นหา'
-                      : 'เมื่อคุณส่งข้อความ ประวัติจะถูกบันทึกไว้ที่นี่อัตโนมัติ'}
+                      ? 'ลองค้นหาด้วยคำอื่น หรือกดล้างคำค้นหา'
+                      : 'เมื่อเริ่มสนทนา ประวัติจะถูกบันทึกไว้ในเครื่องของคุณที่นี่อัตโนมัติ'}
                   </p>
                 </div>
               ) : (
                 Object.entries(groupedSessions).map(([groupTitle, sessionList]) => (
                   <div key={groupTitle} className="space-y-1">
-                    <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    <div className="px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                       {groupTitle}
                     </div>
                     {sessionList.map((session) => {
@@ -340,6 +341,9 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                       return (
                         <div
                           key={session.id}
+                          role="button"
+                          tabIndex={0}
+                          aria-current={isActive ? 'true' : undefined}
                           onClick={() => {
                             if (!isEditing) {
                               onSelectSession(session);
@@ -348,10 +352,19 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                               }
                             }
                           }}
-                          className={`group relative flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all cursor-pointer ${
+                          onKeyDown={(e) => {
+                            if ((e.key === 'Enter' || e.key === ' ') && !isEditing) {
+                              e.preventDefault();
+                              onSelectSession(session);
+                              if (window.innerWidth < 768) {
+                                onClose();
+                              }
+                            }
+                          }}
+                          className={`group relative flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ${
                             isActive
-                              ? 'bg-emerald-50/90 text-emerald-950 font-medium shadow-2xs border border-emerald-200/80'
-                              : 'text-slate-700 hover:bg-slate-100/80 hover:text-slate-900 border border-transparent'
+                              ? 'bg-emerald-50 text-emerald-950 font-semibold shadow-xs border border-emerald-300 ring-2 ring-emerald-500/10'
+                              : 'text-slate-700 hover:bg-slate-100/90 hover:text-slate-900 border border-transparent'
                           }`}
                         >
                           {/* Session Content or Edit Mode */}
@@ -400,7 +413,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                   <p className="truncate font-medium leading-tight">
                                     {session.title || 'บทสนทนาไม่มีชื่อ'}
                                   </p>
-                                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-400">
+                                  <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
                                     <span>{formatSessionTime(session.updatedAt)}</span>
                                     <span>•</span>
                                     <span>{session.messages.length} ข้อความ</span>
@@ -408,27 +421,29 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 </div>
                               </div>
 
-                              {/* Action Buttons (Visible on hover or active) */}
+                              {/* Action Buttons (Visible on hover, focus, or active) */}
                               <div
                                 className={`flex items-center gap-1 shrink-0 ${
-                                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
                                 } transition-opacity`}
                               >
                                 <button
                                   type="button"
                                   onClick={(e) => handleStartRename(session, e)}
+                                  aria-label={`เปลี่ยนชื่อหัวข้อ ${session.title || 'บทสนทนา'}`}
                                   title="เปลี่ยนชื่อหัวข้อ"
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-emerald-600 shadow-2xs transition cursor-pointer"
+                                  className="flex h-7.5 w-7.5 items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:text-emerald-700 shadow-2xs transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                                 >
-                                  <Edit2 className="h-3 w-3" />
+                                  <Edit2 className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   type="button"
                                   onClick={(e) => handleDeleteClick(session.id, e)}
+                                  aria-label={`ลบประวัติ ${session.title || 'บทสนทนา'}`}
                                   title="ลบประวัตินี้"
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-rose-600 shadow-2xs transition cursor-pointer"
+                                  className="flex h-7.5 w-7.5 items-center justify-center rounded-lg text-slate-500 hover:bg-white hover:text-rose-600 shadow-2xs transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                                 >
-                                  <Trash2 className="h-3 w-3" />
+                                  <Trash2 className="h-3.5 w-3.5" />
                                 </button>
                               </div>
                             </>
@@ -447,9 +462,10 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
               <button
                 type="button"
                 onClick={() => setShowClearConfirm(true)}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition cursor-pointer"
+                aria-label="ล้างประวัติการแชททั้งหมด"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg py-2 px-3 text-xs font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-700 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3.5 w-3.5 text-slate-500" />
                 <span>ล้างประวัติการแชททั้งหมด</span>
               </button>
             </div>
@@ -463,6 +479,10 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
       {/* ============================================================ */}
       {targetSession && (
         <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-session-title"
+          aria-describedby="delete-session-desc"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={handleCancelDelete}
         >
@@ -474,7 +494,8 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
             <button
               type="button"
               onClick={handleCancelDelete}
-              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+              aria-label="ปิดหน้าต่างยืนยัน"
+              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               title="ปิด"
             >
               <X className="h-4 w-4" />
@@ -487,25 +508,25 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
               </div>
 
               {/* Title */}
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-                ลบประวัติการสนทนา?
+              <h3 id="delete-session-title" className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                ต้องการลบประวัติการสนทนานี้หรือไม่?
               </h3>
 
-              <p className="mt-1 text-xs text-slate-500 max-w-xs leading-relaxed">
-                คุณแน่ใจหรือไม่ว่าต้องการลบห้องแชทนี้? ข้อมูลทั้งหมดจะถูกลบถาวรและไม่สามารถกู้คืนได้
+              <p id="delete-session-desc" className="mt-1.5 text-xs text-slate-500 max-w-xs leading-relaxed">
+                ห้องสนทนาพร้อมข้อความทั้งหมดในเซสชันนี้จะถูกลบออกจากอุปกรณ์อย่างถาวร และไม่สามารถกู้คืนได้
               </p>
 
               {/* Chat Preview Card */}
               <div className="mt-4 w-full rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-left">
                 <div className="flex items-start gap-2.5">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100/80 text-emerald-700 mt-0.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-100/80 text-rose-700 mt-0.5">
                     <MessageSquare className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <h4 className="font-semibold text-xs sm:text-sm text-slate-900 truncate leading-snug">
                       {targetSession.title || 'บทสนทนาไม่มีชื่อ'}
                     </h4>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 font-medium">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3 text-slate-400" />
                         {formatSessionTime(targetSession.updatedAt)}
@@ -514,7 +535,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                       <span>{targetSession.messages.length} ข้อความ</span>
                     </div>
                     {targetSession.messages.length > 0 && (
-                      <p className="mt-2 text-[11px] text-slate-500 line-clamp-2 bg-white rounded-md p-2 border border-slate-200/60 leading-relaxed italic">
+                      <p className="mt-2 text-[11px] text-slate-600 line-clamp-2 bg-white rounded-md p-2 border border-slate-200/60 leading-relaxed italic">
                         "{targetSession.messages[targetSession.messages.length - 1].text.substring(0, 100)}"
                       </p>
                     )}
@@ -527,17 +548,17 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 <button
                   type="button"
                   onClick={handleCancelDelete}
-                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="button"
                   onClick={(e) => handleConfirmDelete(targetSession.id, e)}
-                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>ยืนยันลบแชท</span>
+                  <span>ลบห้องสนทนานี้</span>
                 </button>
               </div>
             </div>
@@ -550,6 +571,10 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
       {/* ============================================================ */}
       {showClearConfirm && (
         <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="clear-all-title"
+          aria-describedby="clear-all-desc"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setShowClearConfirm(false)}
         >
@@ -561,7 +586,8 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
             <button
               type="button"
               onClick={() => setShowClearConfirm(false)}
-              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+              aria-label="ปิดหน้าต่างยืนยัน"
+              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               title="ปิด"
             >
               <X className="h-4 w-4" />
@@ -574,16 +600,16 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
               </div>
 
               {/* Title */}
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-                ล้างประวัติการสนทนาทั้งหมด?
+              <h3 id="clear-all-title" className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                ต้องการล้างประวัติการสนทนาทั้งหมดหรือไม่?
               </h3>
 
-              <p className="mt-1 text-xs text-slate-500 max-w-xs leading-relaxed">
-                คุณกำลังจะลบประวัติการสนทนาทั้งหมดจำนวน{' '}
+              <p id="clear-all-desc" className="mt-1.5 text-xs text-slate-500 max-w-xs leading-relaxed">
+                ประวัติการสนทนาทั้งหมดจำนวน{' '}
                 <span className="font-semibold text-rose-600">
                   {sessions.length} ห้องแชท
                 </span>{' '}
-                ข้อมูลทั้งหมดจะถูกลบถาวรทันทีและไม่สามารถกู้คืนได้
+                จะถูกลบออกจากเครื่องอย่างถาวร และไม่สามารถกู้คืนได้
               </p>
 
               {/* Action Buttons */}
@@ -591,7 +617,7 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowClearConfirm(false)}
-                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                 >
                   ยกเลิก
                 </button>
@@ -601,10 +627,10 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     onClearAllSessions();
                     setShowClearConfirm(false);
                   }}
-                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 rounded-xl bg-rose-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>ลบทั้งหมด ({sessions.length})</span>
+                  <span>ล้างประวัติทั้งหมด ({sessions.length} รายการ)</span>
                 </button>
               </div>
             </div>

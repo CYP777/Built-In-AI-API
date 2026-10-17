@@ -13,6 +13,7 @@ import {
   ChevronUp,
   AlertTriangle,
   Monitor,
+  Wrench,
 } from 'lucide-react';
 import type { DeviceInfo } from '../utils/device-detection';
 
@@ -77,7 +78,7 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
           </h1>
 
           <p className="text-sm text-slate-300 leading-relaxed max-w-md mx-auto">
-            ระบบแชทบอทนี้ประมวลผลด้วยโมเดล <strong className="text-emerald-400">On-Device AI</strong> บนชิปประมวลผล (CPU / GPU) ภายในคอมพิวเตอร์โดยตรงผ่าน Chrome Prompt API จึง<strong>ไม่สามารถใช้งานบน iPad, iPhone หรืออุปกรณ์พกพาได้</strong>
+            ระบบแชทบอทนี้ประมวลผลด้วยโมเดล <strong className="text-emerald-400">Chrome Built-in AI</strong> บนชิปประมวลผล (CPU / GPU) ภายในคอมพิวเตอร์โดยตรงผ่าน Chrome Prompt API จึง<strong>ไม่สามารถใช้งานบน iPad, iPhone หรืออุปกรณ์พกพาได้</strong>
           </p>
         </div>
 
@@ -89,7 +90,7 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-400">
                 <Laptop className="h-4 w-4" />
               </div>
-              <span>อุปกรณ์ที่รองรับ ✅</span>
+              <span>อุปกรณ์ที่รองรับ (Allowed)</span>
             </div>
             <ul className="text-xs text-slate-300 space-y-1.5">
               <li className="flex items-start gap-1.5">
@@ -117,7 +118,7 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-500/20 border border-rose-500/30 text-rose-400">
                 <Ban className="h-4 w-4" />
               </div>
-              <span>อุปกรณ์ที่ถูกระงับ ❌</span>
+              <span>อุปกรณ์ที่ถูกระงับ (Restricted)</span>
             </div>
             <ul className="text-xs text-slate-300 space-y-1.5">
               <li className="flex items-start gap-1.5">
@@ -222,7 +223,10 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
                 <span className="text-slate-500">สถานะการอนุญาต:</span>
-                <span className="text-rose-400 font-bold">🚫 ระงับการเข้าถึง (Blocked)</span>
+                <span className="text-rose-400 font-bold flex items-center gap-1">
+                  <Ban className="h-3.5 w-3.5 text-rose-400" />
+                  <span>ระงับการเข้าถึง (Blocked)</span>
+                </span>
               </div>
               <div className="pt-1">
                 <span className="text-slate-500 block mb-1">User Agent:</span>
@@ -237,9 +241,10 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
                   <button
                     type="button"
                     onClick={onBypassDev}
-                    className="text-[10px] text-slate-500 hover:text-emerald-400 underline transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-emerald-400 underline transition cursor-pointer"
                   >
-                    🛠️ [โหมดทดสอบสำหรับนักพัฒนา] ข้ามการตรวจจับชั่วคราว (Dev Bypass)
+                    <Wrench className="h-3 w-3 text-slate-500" />
+                    <span>[โหมดทดสอบสำหรับนักพัฒนา] ข้ามการตรวจจับชั่วคราว (Dev Bypass)</span>
                   </button>
                 </div>
               )}

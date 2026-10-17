@@ -203,149 +203,128 @@ export function compactTranscript(text: string): string {
     .join('\n\n');
 }
 
-class SummarizerService {
-  private factory: AISummarizerFactory | null = null;
-  private lastEngineUsed: EngineUsedType = 'mock';
+// Module-level state
+let summarizerFactory: AISummarizerFactory | null = null;
+let lastEngineUsed: EngineUsedType = 'mock';
 
-  public getLastEngineUsed(): EngineUsedType {
-    return this.lastEngineUsed;
+export function getLastEngineUsed(): EngineUsedType {
+  return lastEngineUsed;
+}
+
+export function getSummarizerFactory(): AISummarizerFactory | null {
+  if (typeof window === 'undefined') return null;
+
+  if (window.ai?.summarizer) {
+    return window.ai.summarizer;
   }
 
-  public getFactory(): AISummarizerFactory | null {
-    if (typeof window === 'undefined') return null;
-
-    if (window.ai?.summarizer) {
-      return window.ai.summarizer;
-    }
-
-    if (typeof ai !== 'undefined' && ai?.summarizer) {
-      return ai.summarizer;
-    }
-
-    if (typeof window.Summarizer !== 'undefined') {
-      return window.Summarizer;
-    }
-
-    if (typeof Summarizer !== 'undefined') {
-      return Summarizer;
-    }
-
-    return null;
+  if (typeof ai !== 'undefined' && ai?.summarizer) {
+    return ai.summarizer;
   }
 
-  public async checkAvailability(): Promise<SummarizerState> {
-    try {
-      this.factory = this.getFactory();
+  if (typeof window.Summarizer !== 'undefined') {
+    return window.Summarizer;
+  }
 
-      if (this.factory) {
-        if (typeof this.factory.capabilities === 'function') {
-          const capabilities = await this.factory.capabilities();
-          if (capabilities.available === 'readily') {
-            return {
-              status: 'available',
-              statusMessage: 'Chrome Summarizer API พร้อมใช้งาน (On-Device Model)',
-              isNative: true,
-            };
-          } else if (capabilities.available === 'after-download') {
-            return {
-              status: 'downloading',
-              statusMessage: 'กำลังดาวน์โหลดโมเดล Summarizer บนอุปกรณ์...',
-              isNative: true,
-            };
-          }
+  if (typeof Summarizer !== 'undefined') {
+    return Summarizer;
+  }
+
+  return null;
+}
+
+export async function checkSummarizerAvailability(): Promise<SummarizerState> {
+  try {
+    summarizerFactory = getSummarizerFactory();
+
+    if (summarizerFactory) {
+      if (typeof summarizerFactory.capabilities === 'function') {
+        const capabilities = await summarizerFactory.capabilities();
+        if (capabilities.available === 'readily') {
+          return {
+            status: 'available',
+            statusMessage: 'Chrome Summarizer API พร้อมใช้งาน (On-Device Model)',
+            isNative: true,
+          };
+        } else if (capabilities.available === 'after-download') {
+          return {
+            status: 'downloading',
+            statusMessage: 'กำลังดาวน์โหลดโมเดล Summarizer บนอุปกรณ์...',
+            isNative: true,
+          };
         }
-
-        if (typeof this.factory.availability === 'function') {
-          const avail = await this.factory.availability();
-          if (avail === 'readily' || avail === 'available') {
-            return {
-              status: 'available',
-              statusMessage: 'Chrome Summarizer API พร้อมใช้งาน (On-Device Model)',
-              isNative: true,
-            };
-          } else if (avail === 'after-download' || avail === 'downloading' || avail === 'downloadable') {
-            return {
-              status: 'downloading',
-              statusMessage: 'กำลังดาวน์โหลดโมเดล Summarizer บนอุปกรณ์...',
-              isNative: true,
-            };
-          }
-        }
-
-        return {
-          status: 'available',
-          statusMessage: 'Chrome Summarizer API พร้อมทำงาน',
-          isNative: true,
-        };
       }
 
-      // Check if Prompt API is available as fallback
-      const promptFactory = aiService.getFactory();
-      if (promptFactory) {
-        return {
-          status: 'fallback-prompt',
-          statusMessage: 'ใช้โมเดล Prompt API ในเครื่องสำหรับการสรุปความและบีบอัด',
-          isNative: false,
-        };
+      if (typeof summarizerFactory.availability === 'function') {
+        const avail = await summarizerFactory.availability();
+        if (avail === 'readily' || avail === 'available') {
+          return {
+            status: 'available',
+            statusMessage: 'Chrome Summarizer API พร้อมใช้งาน (On-Device Model)',
+            isNative: true,
+          };
+        } else if (avail === 'after-download' || avail === 'downloading' || avail === 'downloadable') {
+          return {
+            status: 'downloading',
+            statusMessage: 'กำลังดาวน์โหลดโมเดล Summarizer บนอุปกรณ์...',
+            isNative: true,
+          };
+        }
       }
 
       return {
-        status: 'mock',
-        statusMessage: 'โหมดจำลองการสรุปความ',
-        isNative: false,
+        status: 'available',
+        statusMessage: 'Chrome Summarizer API พร้อมทำงาน',
+        isNative: true,
       };
-    } catch (err) {
-      console.warn('Summarizer availability check error:', err);
+    }
+
+    // Check if Prompt API is available as fallback
+    const promptFactory = aiService.getFactory();
+    if (promptFactory) {
       return {
-        status: 'mock',
-        statusMessage: 'โหมดจำลองการสรุปความ',
+        status: 'fallback-prompt',
+        statusMessage: 'ใช้โมเดล Prompt API ในเครื่องสำหรับการสรุปความและบีบอัด',
         isNative: false,
       };
     }
+
+    return {
+      status: 'mock',
+      statusMessage: 'โหมดจำลองการสรุปความ',
+      isNative: false,
+    };
+  } catch (err) {
+    console.warn('Summarizer availability check error:', err);
+    return {
+      status: 'mock',
+      statusMessage: 'โหมดจำลองการสรุปความ',
+      isNative: false,
+    };
+  }
+}
+
+export async function summarizeText(
+  text: string,
+  options?: SummarizeOptions
+): Promise<string> {
+  if (!text || !text.trim()) {
+    return '';
   }
 
-  public async summarize(
-    text: string,
-    options?: SummarizeOptions
-  ): Promise<string> {
-    if (!text || !text.trim()) {
-      return '';
-    }
+  const type = options?.type ?? 'key-points';
+  const format = options?.format ?? 'markdown';
+  const length = options?.length ?? 'medium';
+  const sharedContext = options?.sharedContext ?? 'นี่คือการสรุปเนื้อหาบทสนทนาหรือข้อความ';
 
-    const type = options?.type ?? 'key-points';
-    const format = options?.format ?? 'markdown';
-    const length = options?.length ?? 'medium';
-    const sharedContext = options?.sharedContext ?? 'นี่คือการสรุปเนื้อหาบทสนทนาหรือข้อความ';
+  const hasThai = /[\u0E00-\u0E7F]/.test(text);
+  summarizerFactory = getSummarizerFactory();
 
-    const hasThai = /[\u0E00-\u0E7F]/.test(text);
-    this.factory = this.getFactory();
-
-    // 1. If text is non-Thai and Native Chrome Summarizer API is present, try it
-    // Chrome Native Summarizer officially supports English, Japanese, Spanish, German, French.
-    if (!hasThai && this.factory) {
-      try {
-        const nativeResult = await this.runNativeSummarize(text, {
-          type,
-          format,
-          length,
-          sharedContext,
-          signal: options?.signal,
-          onChunk: options?.onChunk,
-        });
-
-        if (nativeResult && nativeResult.trim().length >= 10) {
-          this.lastEngineUsed = 'native';
-          return cleanTrailingEllipsesAndIncomplete(nativeResult.trim());
-        }
-        console.warn('Native Summarizer returned empty or insufficient text, falling back to Prompt API...');
-      } catch (nativeErr) {
-        console.warn('Native Summarizer API failed, falling back to Prompt API:', nativeErr);
-      }
-    }
-
-    // 2. Prompt API on-device fallback / primary for Thai text
+  // 1. If text is non-Thai and Native Chrome Summarizer API is present, try it
+  // Chrome Native Summarizer officially supports English, Japanese, Spanish, German, French.
+  if (!hasThai && summarizerFactory) {
     try {
-      const promptSummary = await this.runPromptModelSummarize(text, {
+      const nativeResult = await runNativeSummarize(text, {
         type,
         format,
         length,
@@ -354,44 +333,65 @@ class SummarizerService {
         onChunk: options?.onChunk,
       });
 
-      if (promptSummary && promptSummary.trim().length > 0) {
-        this.lastEngineUsed = 'prompt-api';
-        return cleanTrailingEllipsesAndIncomplete(promptSummary.trim());
+      if (nativeResult && nativeResult.trim().length >= 10) {
+        lastEngineUsed = 'native';
+        return cleanTrailingEllipsesAndIncomplete(nativeResult.trim());
       }
-    } catch (promptErr) {
-      console.warn('runPromptModelSummarize failed or hit quota, falling back to dynamic multi-turn mock:', promptErr);
+      console.warn('Native Summarizer returned empty or insufficient text, falling back to Prompt API...');
+    } catch (nativeErr) {
+      console.warn('Native Summarizer API failed, falling back to Prompt API:', nativeErr);
     }
-
-    // 3. Dynamic Mock Fallback (extractive summarization covering all turns cleanly)
-    this.lastEngineUsed = 'mock';
-    return await this.mockSummarize(text, options);
   }
 
-  private async runNativeSummarize(
-    text: string,
-    options: SummarizeOptions
-  ): Promise<string> {
-    if (!this.factory) throw new Error('summarizer factory unavailable');
-    if (options.signal?.aborted) throw new Error('aborted');
+  // 2. Prompt API on-device fallback / primary for Thai text
+  try {
+    const promptSummary = await runPromptModelSummarize(text, {
+      type,
+      format,
+      length,
+      sharedContext,
+      signal: options?.signal,
+      onChunk: options?.onChunk,
+    });
 
-    const TOTAL_TIMEOUT_MS = 60000;
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(new Error('native summarize timeout')),
-      TOTAL_TIMEOUT_MS
-    );
-    const onExternalAbort = () => controller.abort();
-    options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+    if (promptSummary && promptSummary.trim().length > 0) {
+      lastEngineUsed = 'prompt-api';
+      return cleanTrailingEllipsesAndIncomplete(promptSummary.trim());
+    }
+  } catch (promptErr) {
+    console.warn('runPromptModelSummarize failed or hit quota, falling back to dynamic multi-turn mock:', promptErr);
+  }
 
-    let session: AISummarizerSession | null = null;
-    try {
-      session = await this.factory.create({
-        type: options.type,
-        format: options.format,
-        length: options.length,
-        sharedContext: options.sharedContext,
-        signal: controller.signal,
-      });
+  // 3. Dynamic Mock Fallback (extractive summarization covering all turns cleanly)
+  lastEngineUsed = 'mock';
+  return await mockSummarize(text, options);
+}
+
+async function runNativeSummarize(
+  text: string,
+  options: SummarizeOptions
+): Promise<string> {
+  if (!summarizerFactory) throw new Error('summarizer factory unavailable');
+  if (options.signal?.aborted) throw new Error('aborted');
+
+  const TOTAL_TIMEOUT_MS = 60000;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error('native summarize timeout')),
+    TOTAL_TIMEOUT_MS
+  );
+  const onExternalAbort = () => controller.abort();
+  options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+  let session: AISummarizerSession | null = null;
+  try {
+    session = await summarizerFactory.create({
+      type: options.type,
+      format: options.format,
+      length: options.length,
+      sharedContext: options.sharedContext,
+      signal: controller.signal,
+    });
 
       const sessionAny = session as unknown as Record<string, unknown>;
       const quota = sessionAny.inputQuota;
@@ -436,66 +436,66 @@ class SummarizerService {
     }
   }
 
-  private async executeSessionPrompt(
-    session: AILanguageModelSession,
-    userPrompt: string,
-    signal: AbortSignal,
-    onChunk?: (chunk: string) => void
-  ): Promise<string> {
-    if (signal.aborted) throw new Error('aborted');
+async function executeSessionPrompt(
+  session: AILanguageModelSession,
+  userPrompt: string,
+  signal: AbortSignal,
+  onChunk?: (chunk: string) => void
+): Promise<string> {
+  if (signal.aborted) throw new Error('aborted');
 
-    try {
-      if (onChunk && typeof session.promptStreaming === 'function') {
-        const stream = session.promptStreaming(userPrompt, { signal });
-        const finalClean = await consumePromptStream(
-          stream,
-          (chunk) => onChunk(chunk),
-          signal,
-          {
-            postProcess: cleanTrailingEllipsesAndIncomplete,
-          }
-        );
-        if (!finalClean.trim()) throw new Error('empty summary from streaming');
-        return finalClean;
-      }
+  try {
+    if (onChunk && typeof session.promptStreaming === 'function') {
+      const stream = session.promptStreaming(userPrompt, { signal });
+      const finalClean = await consumePromptStream(
+        stream,
+        (chunk) => onChunk(chunk),
+        signal,
+        {
+          postProcess: cleanTrailingEllipsesAndIncomplete,
+        }
+      );
+      if (!finalClean.trim()) throw new Error('empty summary from streaming');
+      return finalClean;
+    }
 
-      const raw = await session.prompt(userPrompt, { signal });
-      const loopCheck = detectRepetitionLoop(raw);
-      const result = cleanTrailingEllipsesAndIncomplete(loopCheck.hasLoop ? loopCheck.cleanedText : raw);
-      if (!result.trim()) throw new Error('empty summary from prompt');
-      onChunk?.(result);
-      return result;
-    } catch (err: unknown) {
-      const errMsg = String((err as Error)?.message || '').toLowerCase();
-      const errName = String((err as Error)?.name || '');
-      const isQuota =
-        errName === 'QuotaExceededError' ||
-        errMsg.includes('too large') ||
-        errMsg.includes('quota');
+    const raw = await session.prompt(userPrompt, { signal });
+    const loopCheck = detectRepetitionLoop(raw);
+    const result = cleanTrailingEllipsesAndIncomplete(loopCheck.hasLoop ? loopCheck.cleanedText : raw);
+    if (!result.trim()) throw new Error('empty summary from prompt');
+    onChunk?.(result);
+    return result;
+  } catch (err: unknown) {
+    const errMsg = String((err as Error)?.message || '').toLowerCase();
+    const errName = String((err as Error)?.name || '');
+    const isQuota =
+      errName === 'QuotaExceededError' ||
+      errMsg.includes('too large') ||
+      errMsg.includes('quota');
 
-      if (isQuota) {
-        console.warn('executeSessionPrompt QuotaExceededError, retrying with emergency compaction:', err);
-        const compactedPrompt = userPrompt.length > 600
-          ? `${userPrompt.substring(0, 320)}\n\n[...ย่อบทสนทนา...]\n\n${userPrompt.substring(userPrompt.length - 180)}`
-          : userPrompt;
+    if (isQuota) {
+      console.warn('executeSessionPrompt QuotaExceededError, retrying with emergency compaction:', err);
+      const compactedPrompt = userPrompt.length > 600
+        ? `${userPrompt.substring(0, 320)}\n\n[...ย่อบทสนทนา...]\n\n${userPrompt.substring(userPrompt.length - 180)}`
+        : userPrompt;
 
-        if (typeof session.prompt === 'function') {
-          const retryRaw = await session.prompt(compactedPrompt, { signal });
-          const retryResult = cleanTrailingEllipsesAndIncomplete(retryRaw);
-          if (retryResult.trim()) {
-            onChunk?.(retryResult);
-            return retryResult;
-          }
+      if (typeof session.prompt === 'function') {
+        const retryRaw = await session.prompt(compactedPrompt, { signal });
+        const retryResult = cleanTrailingEllipsesAndIncomplete(retryRaw);
+        if (retryResult.trim()) {
+          onChunk?.(retryResult);
+          return retryResult;
         }
       }
-      throw err;
     }
+    throw err;
   }
+}
 
-  private async runPromptModelSummarize(
-    text: string,
-    options: SummarizeOptions
-  ): Promise<string> {
+async function runPromptModelSummarize(
+  text: string,
+  options: SummarizeOptions
+): Promise<string> {
     if (options.signal?.aborted) throw new Error('aborted');
 
     const isContextCompression =
@@ -612,7 +612,7 @@ class SummarizerService {
               if (!chunkSession) throw new Error('createIsolatedSession returned null');
 
               try {
-                runningSummary = await this.executeSessionPrompt(
+                runningSummary = await executeSessionPrompt(
                   chunkSession,
                   chunkUserPrompt,
                   controller.signal,
@@ -641,7 +641,7 @@ ${compactedText}
 
 สรุปสาระสำคัญ (เขียนประโยคให้จบสมบูรณ์ทุกประโยค ห้ามตัดจบด้วย ...):`;
 
-      const result = await this.executeSessionPrompt(
+      const result = await executeSessionPrompt(
         session,
         summarizerUserPrompt,
         controller.signal,
@@ -659,52 +659,52 @@ ${compactedText}
     }
   }
 
-  public async summarizeChat(
-    messages: Array<{ sender: string; text: string }>,
-    options?: SummarizeOptions
-  ): Promise<string> {
-    if (!messages || messages.length === 0) {
-      return 'ไม่มีประวัติการสนทนาให้สรุป';
-    }
-
-    const chatTranscript = messages
-      .map((m) => `${m.sender === 'user' ? 'ผู้ใช้งาน' : 'AI ผู้ช่วย'}: ${m.text}`)
-      .join('\n\n');
-
-    return await this.summarize(chatTranscript, {
-      ...options,
-      sharedContext: options?.sharedContext || 'บทสนทนาระหว่างผู้ใช้งานกับ AI ผู้ช่วย',
-    });
+export async function summarizeChat(
+  messages: Array<{ sender: string; text: string }>,
+  options?: SummarizeOptions
+): Promise<string> {
+  if (!messages || messages.length === 0) {
+    return 'ไม่มีประวัติการสนทนาให้สรุป';
   }
 
-  public async compressChatContext(
-    messages: Array<{ sender: string; text: string }>,
-    currentSystemPrompt: string,
-    options?: { signal?: AbortSignal }
-  ): Promise<CompressionResult> {
-    // 1. Build compacted transcript preserving all turns
-    const compactedTranscript = messages
-      .map((m) => {
-        const speaker = m.sender === 'user' ? 'ผู้ใช้งาน' : 'AI';
-        const compactedText = compactMessageText(m.text, m.sender === 'user');
-        return `${speaker}: ${compactedText}`;
-      })
-      .join('\n\n');
+  const chatTranscript = messages
+    .map((m) => `${m.sender === 'user' ? 'ผู้ใช้งาน' : 'AI ผู้ช่วย'}: ${m.text}`)
+    .join('\n\n');
 
-    const originalTokens = estimateTokens(compactedTranscript + currentSystemPrompt);
+  return await summarizeText(chatTranscript, {
+    ...options,
+    sharedContext: options?.sharedContext || 'บทสนทนาระหว่างผู้ใช้งานกับ AI ผู้ช่วย',
+  });
+}
 
-    // 2. Extract existing compressed context if present to avoid losing prior memory
-    const marker = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n';
-    let existingCompressed = '';
-    if (currentSystemPrompt.includes(marker)) {
-      const parts = currentSystemPrompt.split(marker);
-      if (parts[1]) {
-        const memoryOnly = parts[1].split('\n\n[คำสั่งสำคัญสำหรับ AI]:')[0];
-        existingCompressed = memoryOnly.split('\n---')[0].trim();
-      }
+export async function compressChatContext(
+  messages: Array<{ sender: string; text: string }>,
+  currentSystemPrompt: string,
+  options?: { signal?: AbortSignal }
+): Promise<CompressionResult> {
+  // 1. Build compacted transcript preserving all turns
+  const compactedTranscript = messages
+    .map((m) => {
+      const speaker = m.sender === 'user' ? 'ผู้ใช้งาน' : 'AI';
+      const compactedText = compactMessageText(m.text, m.sender === 'user');
+      return `${speaker}: ${compactedText}`;
+    })
+    .join('\n\n');
+
+  const originalTokens = estimateTokens(compactedTranscript + currentSystemPrompt);
+
+  // 2. Extract existing compressed context if present to avoid losing prior memory
+  const marker = '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n';
+  let existingCompressed = '';
+  if (currentSystemPrompt.includes(marker)) {
+    const parts = currentSystemPrompt.split(marker);
+    if (parts[1]) {
+      const memoryOnly = parts[1].split('\n\n[คำสั่งสำคัญสำหรับ AI]:')[0];
+      existingCompressed = memoryOnly.split('\n---')[0].trim();
     }
+  }
 
-    const compressionInstruction = `คุณคือระบบสรุปบทสนทนาเพื่อบันทึกเป็นความจำให้ AI สนทนาต่อได้อย่างต่อเนื่องและแม่นยำ
+  const compressionInstruction = `คุณคือระบบสรุปบทสนทนาเพื่อบันทึกเป็นความจำให้ AI สนทนาต่อได้อย่างต่อเนื่องและแม่นยำ
 กฎสำคัญในการเขียน:
 1. เขียนสรุปเป็นภาษาไทย กระชับ ตรงประเด็น ไม่ใส่ emoji ไม่ใช้เครื่องหมาย Markdown ตาราง
 2. สกัดสาระสำคัญให้ครบทุกประเด็นการคุย: หัวข้อที่ผู้ใช้สอบถาม, ข้อสรุปหรือคำตอบที่ได้รับ (เก็บชื่อ ตัวเลข โค้ด ข้อเท็จจริงเฉพาะให้ครบ), ข้อตกลงหรือความชอบที่ผู้ใช้ระบุ, เรื่องที่ยังค้างอยู่
@@ -712,124 +712,130 @@ ${compactedText}
 4. เขียนประโยคให้จบสมบูรณ์ทุกประโยค ห้ามตัดจบประโยคค้างไว้ และห้ามจบด้วยเครื่องหมายจุดไข่ปลา (...) หรือ "ฯลฯ" โดยเด็ดขาด
 ${existingCompressed ? `5. บันทึกเดิมก่อนหน้า: "${existingCompressed}" -> โปรดสังเคราะห์รวมสาระของบันทึกเดิมเข้ากับบทสนทนาใหม่ให้เป็นเนื้อเดียวกันอย่างสมบูรณ์` : ''}`;
 
-    let rawSummary: string;
-    const safeController = new AbortController();
-    const safeTimer = setTimeout(() => {
-      safeController.abort();
-    }, 60000);
+  let rawSummary: string;
+  const safeController = new AbortController();
+  const safeTimer = setTimeout(() => {
+    safeController.abort();
+  }, 60000);
 
-    if (options?.signal) {
-      options.signal.addEventListener('abort', () => safeController.abort(), { once: true });
-    }
-
-    try {
-      rawSummary = await this.summarize(compactedTranscript, {
-        type: 'tl;dr',
-        format: 'plain-text',
-        length: 'medium',
-        sharedContext: compressionInstruction,
-        signal: safeController.signal,
-      });
-    } catch (summarizeErr) {
-      console.warn('summarize in compressChatContext errored or timed out:', summarizeErr);
-      rawSummary = await this.mockSummarize(compactedTranscript, { type: 'tl;dr' });
-    } finally {
-      clearTimeout(safeTimer);
-    }
-
-    const cleaned = cleanCompressedSummary(rawSummary);
-    const newSummaryPortion =
-      cleaned ||
-      (existingCompressed ? existingCompressed : 'มีการสนทนาก่อนหน้าระหว่างผู้ใช้กับ AI เกี่ยวกับหัวข้อที่ได้กล่าวถึงข้างต้น');
-
-    const compressedSummary = cleanTrailingEllipsesAndIncomplete(newSummaryPortion);
-
-    const contextHeader =
-      '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' +
-      compressedSummary +
-      '\n\n[คำสั่งสำคัญสำหรับ AI]:\n' +
-      '1. นี่คือประวัติและสาระสำคัญของการสนทนาทั้งหมดที่คุณและผู้ใช้ได้พูดคุยกันไว้ คุณต้องจดจำหัวข้อ ข้อมูลสำคัญ และข้อสรุปทั้งหมดในส่วนนี้เสมอ\n' +
-      '2. หากผู้ใช้ถามว่า "จำได้ไหม", "เมื่อกี้คุยอะไรกัน", หรือถามถึงเรื่องเดิม ให้ตอบจากข้อมูลในส่วนนี้อย่างเป็นธรรมชาติ ถูกต้อง และครบถ้วนทุกประเด็น\n' +
-      '3. ห้ามตอบว่า "จำไม่ได้" หรือ "ไม่มีประวัติการสนทนา" โดยเด็ดขาด เพราะคุณมีบันทึกความจำอยู่ข้างต้นนี้แล้ว\n---';
-    const cleanBasePrompt = currentSystemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
-    const newSystemPrompt = cleanBasePrompt + contextHeader;
-
-    const compressedTokens = estimateTokens(newSystemPrompt);
-    const savedTokens = Math.max(0, originalTokens - compressedTokens);
-    const percentageSaved =
-      originalTokens > 0 ? Math.min(95, Math.max(10, Math.round((savedTokens / originalTokens) * 100))) : 0;
-
-    return {
-      compressedSummary,
-      newSystemPrompt,
-      originalTokens,
-      compressedTokens,
-      savedTokens,
-      percentageSaved,
-    };
+  if (options?.signal) {
+    options.signal.addEventListener('abort', () => safeController.abort(), { once: true });
   }
 
-  private async mockSummarize(
-    text: string,
-    options?: SummarizeOptions
-  ): Promise<string> {
-    const type = options?.type ?? 'key-points';
-    const turns = parseTranscriptTurns(text);
-
-    let mockText: string;
-
-    if (turns.length === 0) {
-      mockText = 'ไม่มีข้อมูลการสนทนาที่ต้องการสรุป';
-    } else {
-      const mainTopic = turns[0].userQuestion.length > 80
-        ? turns[0].userQuestion.substring(0, 75).trim()
-        : turns[0].userQuestion;
-
-      if (type === 'tl;dr') {
-        if (turns.length === 1) {
-          mockText = `สรุปใจความสำคัญ:\n- หัวข้อหลัก: ${mainTopic}\n- รายละเอียดคำถาม: ${turns[0].userQuestion}\n- ข้อสรุปของ AI: ${turns[0].aiResponse}`;
-        } else {
-          const points = turns
-            .map((t, idx) => `- ประเด็นที่ ${idx + 1}: ${t.userQuestion}\n  -> ข้อสรุป: ${t.aiResponse}`)
-            .join('\n');
-          mockText = `สรุปใจความสำคัญของการสนทนา (${turns.length} ประเด็น):\n${points}\n- สถานะ: ครอบคลุมสาระสำคัญและข้อสรุปครบถ้วนทุกข้อความ`;
-        }
-      } else if (type === 'headline') {
-        const allTopics = turns.map((t) => t.userQuestion.substring(0, 40).trim()).slice(0, 3).join(', ');
-        mockText = `หัวข้อหลัก: การพูดคุยเรื่อง ${allTopics}`;
-      } else {
-        const points = turns
-          .map((t, idx) => `- **ประเด็นที่ ${idx + 1}**: ${t.userQuestion}\n  - **ข้อสรุปจาก AI**: ${t.aiResponse}`)
-          .join('\n');
-        mockText = `### สรุปประเด็นสำคัญ (${turns.length} ประเด็น)\n${points}`;
-      }
-    }
-
-    mockText = cleanTrailingEllipsesAndIncomplete(mockText);
-
-    if (options?.onChunk) {
-      let current = '';
-      for (let i = 0; i < mockText.length; i++) {
-        if (options.signal?.aborted) break;
-        current += mockText[i];
-        options.onChunk(current);
-        await new Promise((r) => setTimeout(r, 8));
-      }
-      return current;
-    }
-
-    return mockText;
+  try {
+    rawSummary = await summarizeText(compactedTranscript, {
+      type: 'tl;dr',
+      format: 'plain-text',
+      length: 'medium',
+      sharedContext: compressionInstruction,
+      signal: safeController.signal,
+    });
+  } catch (summarizeErr) {
+    console.warn('summarize in compressChatContext errored or timed out:', summarizeErr);
+    rawSummary = await mockSummarize(compactedTranscript, { type: 'tl;dr' });
+  } finally {
+    clearTimeout(safeTimer);
   }
+
+  const cleaned = cleanCompressedSummary(rawSummary);
+  const newSummaryPortion =
+    cleaned ||
+    (existingCompressed ? existingCompressed : 'มีการสนทนาก่อนหน้าระหว่างผู้ใช้กับ AI เกี่ยวกับหัวข้อที่ได้กล่าวถึงข้างต้น');
+
+  const compressedSummary = cleanTrailingEllipsesAndIncomplete(newSummaryPortion);
+
+  const contextHeader =
+    '\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:\n' +
+    compressedSummary +
+    '\n\n[คำสั่งสำคัญสำหรับ AI]:\n' +
+    '1. นี่คือประวัติและสาระสำคัญของการสนทนาทั้งหมดที่คุณและผู้ใช้ได้พูดคุยกันไว้ คุณต้องจดจำหัวข้อ ข้อมูลสำคัญ และข้อสรุปทั้งหมดในส่วนนี้เสมอ\n' +
+    '2. หากผู้ใช้ถามว่า "จำได้ไหม", "เมื่อกี้คุยอะไรกัน", หรือถามถึงเรื่องเดิม ให้ตอบจากข้อมูลในส่วนนี้อย่างเป็นธรรมชาติ ถูกต้อง และครบถ้วนทุกประเด็น\n' +
+    '3. ห้ามตอบว่า "จำไม่ได้" หรือ "ไม่มีประวัติการสนทนา" โดยเด็ดขาด เพราะคุณมีบันทึกความจำอยู่ข้างต้นนี้แล้ว\n---';
+  const cleanBasePrompt = currentSystemPrompt.split('\n\n---\n[บริบทประวัติเดิมที่ถูกบีบอัด]:')[0].trim();
+  const newSystemPrompt = cleanBasePrompt + contextHeader;
+
+  const compressedTokens = estimateTokens(newSystemPrompt);
+  const savedTokens = Math.max(0, originalTokens - compressedTokens);
+  const percentageSaved =
+    originalTokens > 0 ? Math.min(95, Math.max(10, Math.round((savedTokens / originalTokens) * 100))) : 0;
+
+  return {
+    compressedSummary,
+    newSystemPrompt,
+    originalTokens,
+    compressedTokens,
+    savedTokens,
+    percentageSaved,
+  };
 }
 
-export const summarizerService = new SummarizerService();
+async function mockSummarize(
+  text: string,
+  options?: SummarizeOptions
+): Promise<string> {
+  const type = options?.type ?? 'key-points';
+  const turns = parseTranscriptTurns(text);
+
+  let mockText: string;
+
+  if (turns.length === 0) {
+    mockText = 'ไม่มีข้อมูลการสนทนาที่ต้องการสรุป';
+  } else {
+    const mainTopic = turns[0].userQuestion.length > 80
+      ? turns[0].userQuestion.substring(0, 75).trim()
+      : turns[0].userQuestion;
+
+    if (type === 'tl;dr') {
+      if (turns.length === 1) {
+        mockText = `สรุปใจความสำคัญ:\n- หัวข้อหลัก: ${mainTopic}\n- รายละเอียดคำถาม: ${turns[0].userQuestion}\n- ข้อสรุปของ AI: ${turns[0].aiResponse}`;
+      } else {
+        const points = turns
+          .map((t, idx) => `- ประเด็นที่ ${idx + 1}: ${t.userQuestion}\n  -> ข้อสรุป: ${t.aiResponse}`)
+          .join('\n');
+        mockText = `สรุปใจความสำคัญของการสนทนา (${turns.length} ประเด็น):\n${points}\n- สถานะ: ครอบคลุมสาระสำคัญและข้อสรุปครบถ้วนทุกข้อความ`;
+      }
+    } else if (type === 'headline') {
+      const allTopics = turns.map((t) => t.userQuestion.substring(0, 40).trim()).slice(0, 3).join(', ');
+      mockText = `หัวข้อหลัก: การพูดคุยเรื่อง ${allTopics}`;
+    } else {
+      const points = turns
+        .map((t, idx) => `- **ประเด็นที่ ${idx + 1}**: ${t.userQuestion}\n  - **ข้อสรุปจาก AI**: ${t.aiResponse}`)
+        .join('\n');
+      mockText = `### สรุปประเด็นสำคัญ (${turns.length} ประเด็น)\n${points}`;
+    }
+  }
+
+  mockText = cleanTrailingEllipsesAndIncomplete(mockText);
+
+  if (options?.onChunk) {
+    let current = '';
+    for (let i = 0; i < mockText.length; i++) {
+      if (options.signal?.aborted) break;
+      current += mockText[i];
+      options.onChunk(current);
+      await new Promise((r) => setTimeout(r, 8));
+    }
+    return current;
+  }
+
+  return mockText;
+}
+
+export const summarizerService = {
+  getLastEngineUsed,
+  getFactory: getSummarizerFactory,
+  checkAvailability: checkSummarizerAvailability,
+  summarize: summarizeText,
+  summarizeChat,
+  compressChatContext,
+};
 
 export function cleanCompressedSummary(text: string): string {
   if (!text || !text.trim()) return '';
 
   return text
-    // Remove robotic headers like "🧠 Context Compression Engine Summary"
-    .replace(/^#*\s*🧠?\s*Context Compression Engine Summary\s*:?/gim, '')
+    // Remove robotic headers like Context Compression Engine Summary
+    .replace(/^#*\s*[\u{1F9E0}]?\s*Context Compression Engine Summary\s*:?/gimu, '')
     .replace(/^#*\s*สรุป(ใจความสำคัญ|ประเด็นสำคัญ|เพื่อเป็นความจำ).*$/gim, '')
     // Remove redundant technical labels in brackets
     .replace(/\(Main Topic\):?/gi, ':')

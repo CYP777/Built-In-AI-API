@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   ShieldCheck,
   Check,
-  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 
 export interface PolicyModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAccept: () => void;
+  onRevoke?: () => void;
+  isAlreadyAccepted?: boolean;
   onAppendToPrompt?: (shouldAppend: boolean) => void;
   isAppended?: boolean;
 }
@@ -18,10 +20,20 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
   isOpen,
   onClose,
   onAccept,
+  onRevoke,
+  isAlreadyAccepted = false,
   onAppendToPrompt,
   isAppended = true,
 }) => {
   const [agreed, setAgreed] = useState<boolean>(true);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Reset scroll position when modal opens
+  useEffect(() => {
+    if (isOpen && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -32,22 +44,34 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
   };
 
   const handleConfirm = () => {
-    onAccept();
+    if (isAlreadyAccepted && !agreed) {
+      onRevoke?.();
+    } else {
+      onAccept();
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="flex flex-col w-full max-w-xl max-h-[90vh] rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200">
+      <div className="flex flex-col w-full max-w-2xl max-h-[90vh] rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800">
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/70">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4.5 bg-slate-50/80">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/20">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-800 text-base leading-tight">
-                ข้อตกลงและนโยบายความปลอดภัย AI
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-slate-900 text-base leading-tight">
+                  ข้อตกลงและนโยบายความปลอดภัย AI
+                </h3>
+                {isAlreadyAccepted && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                    <Check className="h-3 w-3" />
+                    ยอมรับแล้ว
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-slate-500">
                 มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
               </p>
@@ -55,7 +79,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
             title="ปิดหน้าต่าง"
           >
             <X className="h-5 w-5" />
@@ -63,88 +87,72 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
         </div>
 
         {/* Modal Content */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 bg-white">
-          {/* Welcome Info Box */}
-          <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-4 text-xs text-slate-700">
-            <div className="flex items-center gap-1.5 font-bold text-emerald-800 mb-1">
-              <Sparkles className="h-4 w-4 text-emerald-600" />
-              <span>ยินดีต้อนรับสู่ระบบแชทบอท On-Device AI</span>
-            </div>
-            <p className="text-slate-600 leading-relaxed">
-              ระบบนี้ประมวลผลด้วยโมเดล On-Device บนอุปกรณ์ของคุณโดยตรง เพื่อความถูกต้องและปลอดภัยสูงสุด
-              โปรดศึกษานโยบายความปลอดภัยและข้อกำหนดหลัก 4 ประการด้านล่างก่อนเริ่มต้นการสนทนา
-            </p>
-          </div>
-
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 bg-white">
           {/* 4 Pillars Grid */}
           <div className="grid grid-cols-1 gap-3">
             {/* Pillar 1 */}
-            <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition-colors">
               <div className="flex items-start gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-bold text-xs">
                   1
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
-                    นโยบายความถูกต้องและต้านข้อมูลเท็จ (Truth & Anti-Hallucination)
+                    ความถูกต้องและป้องกันข้อมูลเท็จ
                   </h5>
                   <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                    ปัญญาประดิษฐ์ต้องตอบข้อซักถามบนพื้นฐานข้อเท็จจริง หลีกเลี่ยงการกุเรื่องหรือชี้นำผิด ๆ
-                    หากไม่มีข้อมูลที่แน่นอน จะแจ้งความไม่แน่นอนอย่างตรงไปตรงมาเพื่อสกัดกั้นข้อมูลเท็จ
+                    ตอบคำถามบนพื้นฐานข้อเท็จจริง หลีกเลี่ยงการสร้างข้อมูลเท็จ (Hallucination) หากข้อมูลไม่ชัดเจน จะแจ้งตามตรงเพื่อความถูกต้องสูงสุด
                   </p>
                 </div>
               </div>
             </div>
 
             {/* Pillar 2 */}
-            <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition-colors">
               <div className="flex items-start gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-bold text-xs">
                   2
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
-                    นโยบายความปลอดภัยและเนื้อหาต้องห้าม (Safety & Prohibited Content)
+                    ความปลอดภัยและเนื้อหาต้องห้าม
                   </h5>
                   <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                    ปฏิเสธการสร้างหรือเผยแพร่เนื้อหาที่ผิดกฎหมาย การพนัน สื่อลามกอนาจาร การสนับสนุนความรุนแรง
-                    การคุกคาม หมิ่นประมาท คำพูดสร้างความเกลียดชัง (Hate Speech) หรือการละเมิดสิทธิมนุษยชน
+                    ไม่สร้างและไม่สนับสนุนเนื้อหาผิดกฎหมาย ความรุนแรง การคุกคาม การพนัน สื่อลามกอนาจาร หรือคำพูดสร้างความเกลียดชัง (Hate Speech)
                   </p>
                 </div>
               </div>
             </div>
 
             {/* Pillar 3 */}
-            <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition-colors">
               <div className="flex items-start gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-bold text-xs">
                   3
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
-                    นโยบายคุ้มครองข้อมูลส่วนบุคคล On-Device (PDPA Compliance)
+                    คุ้มครองข้อมูลส่วนบุคคล (PDPA)
                   </h5>
                   <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                    บทสนทนาและคำถามทั้งหมดประมวลผลบนชิปภายในเครื่องของคุณ (Local Execution) 100%
-                    <strong> ไม่มีการส่งข้อมูลประวัติออกสู่อินเทอร์เน็ตหรือจัดเก็บบนเซิร์ฟเวอร์ภายนอก</strong> สอดคล้องตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562
+                    บทสนทนาทั้งหมดประมวลผลภายในเครื่องของคุณ 100% <strong>ไม่มีการส่งข้อมูลออกสู่อินเทอร์เน็ตหรือจัดเก็บบนเซิร์ฟเวอร์ภายนอก</strong> สอดคล้องตาม พ.ร.บ. คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562
                   </p>
                 </div>
               </div>
             </div>
 
             {/* Pillar 4 */}
-            <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs hover:border-emerald-300 transition-colors">
               <div className="flex items-start gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 font-bold text-xs">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-bold text-xs">
                   4
                 </div>
                 <div>
                   <h5 className="font-bold text-slate-900 text-xs sm:text-sm">
-                    ความเป็นกลางและความรับผิดชอบ (Neutrality & Transparency)
+                    ความเป็นกลางและความโปร่งใส
                   </h5>
                   <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                    วางตัวเป็นกลางในประเด็นทางสังคม และเปิดเผยอย่างโปร่งใสว่าเป็นผลลัพธ์จากเทคโนโลยี AI
-                    ขอให้ผู้ใช้งานใช้วิจารณญาณในการนำข้อมูลไปอ้างอิง
+                    วางตัวเป็นกลางและเปิดเผยอย่างโปร่งใสว่าเป็นผลลัพธ์จาก AI โปรดใช้วิจารณญาณในการนำข้อมูลไปอ้างอิง
                   </p>
                 </div>
               </div>
@@ -152,7 +160,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
           </div>
 
           {/* Checkboxes Area */}
-          <div className="rounded-xl bg-slate-50 border border-slate-200/80 p-3.5 space-y-2 text-xs text-slate-700">
+          <div className="space-y-2.5 text-xs text-slate-700 px-1 pt-1">
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -161,9 +169,16 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                 className="h-4 w-4 rounded accent-emerald-600 cursor-pointer"
               />
               <span className="font-medium text-slate-800">
-                ข้าพเจ้าได้อ่านและเข้าใจข้อกำหนดนโยบายความปลอดภัยและจริยธรรม AI ฉบับนี้แล้ว
+                ฉันได้อ่านและยอมรับข้อกำหนดความปลอดภัย AI ฉบับนี้
               </span>
             </label>
+
+            {isAlreadyAccepted && !agreed && (
+              <p className="text-[11.5px] text-rose-600 font-medium pl-6.5 flex items-center gap-1.5 animate-in fade-in duration-150">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>หากเพิกถอนการยอมรับ คุณจะไม่สามารถส่งข้อความถึง AI ได้จนกว่าจะยอมรับอีกครั้ง</span>
+              </p>
+            )}
 
             {onAppendToPrompt && (
               <label className="flex items-center gap-2.5 cursor-pointer select-none text-slate-600">
@@ -174,7 +189,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                   className="h-4 w-4 rounded accent-emerald-600 cursor-pointer"
                 />
                 <span className={isAppended ? 'font-medium text-slate-800' : 'text-slate-500'}>
-                  ผนวกข้อกำหนดนโยบายนี้เข้าสู่ System Prompt ของ AI โดยอัตโนมัติ
+                  ใช้นโยบายนี้กำกับคำตอบของ AI เสมอ (System Prompt)
                 </span>
               </label>
             )}
@@ -182,32 +197,34 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/70 px-6 py-3.5">
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <ShieldCheck className="h-4 w-4 text-emerald-600" />
-            <span className="font-medium">
-              ประมวลผลบนเครื่อง 100%
-            </span>
-          </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/80 px-6 py-3.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200/60 transition cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          >
+            {isAlreadyAccepted ? 'ปิด' : 'ไม่ยอมรับ'}
+          </button>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          {isAlreadyAccepted && !agreed ? (
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-xl px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200/60 transition"
+              onClick={handleConfirm}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 active:scale-95 transition cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2"
             >
-              ปิด
+              <span>เพิกถอนการยอมรับ</span>
             </button>
+          ) : (
             <button
               type="button"
               disabled={!agreed}
               onClick={handleConfirm}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2 text-sm font-medium text-white shadow-xs hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             >
-              <Check className="h-4 w-4" />
-              <span>ยอมรับนโยบาย</span>
+              <Check className="h-3.5 w-3.5" />
+              <span>{isAlreadyAccepted ? 'เรียบร้อย' : 'ยอมรับข้อตกลง'}</span>
             </button>
-          </div>
+          )}
         </div>
       </div>
     </div>

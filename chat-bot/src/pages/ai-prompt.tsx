@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, ArrowDown, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert, Music, Radio } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, ArrowDown, ArrowRight, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert, Music, Radio } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
 import type { ImageAttachment, AudioAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
-import { SettingsModal } from '../components/SettingsModal';
-import { PolicyModal } from '../components/PolicyModal';
-import { SummaryModal } from '../components/SummaryModal';
+const SettingsModal = React.lazy(() =>
+  import('../components/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+const PolicyModal = React.lazy(() =>
+  import('../components/PolicyModal').then((m) => ({ default: m.PolicyModal }))
+);
+const SummaryModal = React.lazy(() =>
+  import('../components/SummaryModal').then((m) => ({ default: m.SummaryModal }))
+);
 import { aiService, estimateTokens, type AIServiceState } from '../services/ai-service';
 import { summarizerService } from '../services/summarizer-service';
 import { speechService } from '../services/speech-service';
 import { chatHistoryService } from '../services/chat-history-service';
-import type { ChatSession } from '../types/chat-history';
+import type { ChatSession, CachedSessionSummary } from '../types/chat-history';
 import {
   detectProfanity,
   getProfanitySafetyMessage,
@@ -22,23 +28,23 @@ import {
 const QUICK_PROMPTS = [
   {
     icon: Lightbulb,
-    title: 'อธิบายแนวคิด AI',
-    prompt: 'Built-in AI (Prompt API) บน Chrome คืออะไร และมีข้อดีอย่างไรเมื่อเทียบกับ Cloud AI?',
+    title: 'ทำความเข้าใจ Chrome Built-in AI',
+    prompt: 'Chrome Built-in AI (Prompt API) ทำงานอย่างไร และมีข้อดีอย่างไรเมื่อเทียบกับ Cloud AI ในแง่ความปลอดภัยและความเป็นส่วนตัว?',
   },
   {
     icon: Code2,
-    title: 'ตัวอย่างโค้ด React',
-    prompt: 'ช่วยเขียน Custom Hook ใน React สำหรับตรวจจับสถานะ Online/Offline พร้อมตัวอย่างการใช้งาน',
+    title: 'เขียนและแนะนำโค้ด React',
+    prompt: 'ช่วยเขียน Custom Hook ใน React สำหรับตรวจจับสถานะ Online/Offline พร้อมคำอธิบายและตัวอย่างการนำไปใช้งาน',
   },
   {
     icon: FileText,
     title: 'ร่างอีเมลภาษาทางการ',
-    prompt: 'ช่วยเขียนอีเมลขอลางานเพื่อไปทำธุระส่วนตัว 1 วัน แบบสุภาพและเป็นมืออาชีพ',
+    prompt: 'ช่วยร่างอีเมลขอลางานเพื่อทำธุระส่วนตัว 1 วัน ด้วยภาษาที่สุภาพ เป็นมืออาชีพ และกระชับชัดเจน',
   },
   {
     icon: Globe,
-    title: 'แปลภาษาและปรับสำนวน',
-    prompt: 'ช่วยแปลประโยคนี้เป็นภาษาอังกฤษแบบ Business Casual: "เราจะเริ่มพัฒนาฟีเจอร์นี้ในสัปดาห์หน้าตามแผนงาน"',
+    title: 'แปลและปรับสำนวนภาษา',
+    prompt: 'ช่วยแปลประโยคนี้เป็นภาษาอังกฤษระดับ Business Communication อย่างเป็นธรรมชาติ: "เราจะเริ่มพัฒนาฟีเจอร์นี้ในสัปดาห์หน้าตามแผนงาน"',
   },
 ];
 
@@ -47,7 +53,7 @@ const POLICY_CLAUSE =
   '\n\n[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]: ต้องตอบโดยยึดหลักข้อเท็จจริงและความเป็นกลาง ตรวจสอบความถูกต้องอย่างรอบคอบ ปฏิเสธข้อมูลที่ผิดกฎหมายหรือสร้างความเกลียดชัง และไม่แต่งเติมข้อมูลเท็จอย่างเด็ดขาด';
 const getDefaultBasePrompt = (modelName?: string): string => {
   const name = modelName || 'Chrome Built-in AI';
-  return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} บนเครื่องของผู้ใช้ (On-Device) อย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
+  return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} ในคอมพิวเตอร์ของคุณอย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
 };
 const POLICY_ACCEPTED_KEY = 'ai_safety_policy_accepted';
 
@@ -74,6 +80,32 @@ const AIPromptPage: React.FC = () => {
     return all.length > 0 ? all[0].id : null;
   });
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
+
+  // Summary Cache (locks summary per session/draft until explicitly regenerated)
+  const [summaryCache, setSummaryCache] = useState<Record<string, CachedSessionSummary>>(() => {
+    const all = chatHistoryService.getAllSessions();
+    const initial: Record<string, CachedSessionSummary> = {};
+    all.forEach((s) => {
+      if (s.savedSummary) {
+        initial[s.id] = s.savedSummary;
+      }
+    });
+    return initial;
+  });
+
+  // Policy Modal & Acceptance State (เปิดแจ้งเตือนอัตโนมัติเฉพาะเมื่อยังไม่เคยกดยอมรับนโยบาย)
+  const [isPolicyAccepted, setIsPolicyAccepted] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(POLICY_ACCEPTED_KEY) === 'true';
+    }
+    return false;
+  });
+  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(POLICY_ACCEPTED_KEY) !== 'true';
+    }
+    return false;
+  });
 
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
@@ -121,6 +153,15 @@ const AIPromptPage: React.FC = () => {
 
     chatHistoryService.init().then((loadedSessions) => {
       setSessions(loadedSessions);
+      const initialCache: Record<string, CachedSessionSummary> = {};
+      loadedSessions.forEach((s) => {
+        if (s.savedSummary) {
+          initialCache[s.id] = s.savedSummary;
+        }
+      });
+      if (Object.keys(initialCache).length > 0) {
+        setSummaryCache((prev) => ({ ...initialCache, ...prev }));
+      }
       const savedActiveId = chatHistoryService.getActiveSessionId();
       if (!currentSessionIdRef.current && savedActiveId && loadedSessions.some((s) => s.id === savedActiveId)) {
         setCurrentSessionId(savedActiveId);
@@ -325,6 +366,10 @@ const AIPromptPage: React.FC = () => {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
+      if (!isPolicyAccepted) {
+        setIsPolicyModalOpen(true);
+        return;
+      }
       const files = e.dataTransfer.files;
       if (files && files.length > 0) {
         for (let i = 0; i < files.length; i++) {
@@ -337,7 +382,7 @@ const AIPromptPage: React.FC = () => {
         }
       }
     },
-    [processImageFile, processAudioFile]
+    [processImageFile, processAudioFile, isPolicyAccepted]
   );
 
   // Handle file select (Image attachment)
@@ -458,14 +503,6 @@ const AIPromptPage: React.FC = () => {
     };
   }, []);
 
-  // Policy Modal State (เปิดแจ้งเตือนอัตโนมัติเฉพาะเมื่อยังไม่เคยกดยอมรับนโยบาย)
-  const [isPolicyModalOpen, setIsPolicyModalOpen] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(POLICY_ACCEPTED_KEY) !== 'true';
-    }
-    return false;
-  });
-
   // Prompt History state สำหรับปุ่มลูกศรขึ้น/ลง (Arrow Up / Down)
   const [promptHistory, setPromptHistory] = useState<string[]>(() => {
     const savedActiveId = chatHistoryService.getActiveSessionId();
@@ -490,6 +527,20 @@ const AIPromptPage: React.FC = () => {
   // Summarizer & Context Compression state
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
   const [isCompressingContext, setIsCompressingContext] = useState<boolean>(false);
+
+  const currentChatKey = currentSessionId || '__active_draft__';
+  const activeCachedSummary = summaryCache[currentChatKey] || null;
+
+  const handleSaveSummary = useCallback((summary: CachedSessionSummary) => {
+    const activeKey = currentSessionIdRef.current || '__active_draft__';
+    setSummaryCache((prev) => ({
+      ...prev,
+      [activeKey]: summary,
+    }));
+    if (currentSessionIdRef.current) {
+      chatHistoryService.updateSessionSummary(currentSessionIdRef.current, summary);
+    }
+  }, [setSummaryCache]);
 
   const [statusState, setStatusState] = useState<AIServiceState>(() => {
     const detected = aiService.detectModelType();
@@ -713,6 +764,15 @@ const AIPromptPage: React.FC = () => {
     if (typeof window !== 'undefined') {
       localStorage.setItem(POLICY_ACCEPTED_KEY, 'true');
     }
+    setIsPolicyAccepted(true);
+    setIsPolicyModalOpen(false);
+  };
+
+  const handleRevokePolicy = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(POLICY_ACCEPTED_KEY);
+    }
+    setIsPolicyAccepted(false);
     setIsPolicyModalOpen(false);
   };
 
@@ -905,6 +965,12 @@ const AIPromptPage: React.FC = () => {
     setPromptHistory([]);
     setHistoryIndex(-1);
     draftInputRef.current = '';
+    setSummaryCache((prev) => {
+      if (!prev['__active_draft__']) return prev;
+      const next = { ...prev };
+      delete next['__active_draft__'];
+      return next;
+    });
 
     const detected = aiService.detectModelType();
     const defaultPrompt =
@@ -917,10 +983,16 @@ const AIPromptPage: React.FC = () => {
       temperature,
       topK,
     });
-  }, [handleStop, isListening, isRecordingAudio, cancelAudioRecording, isPolicyAppended, temperature, topK]);
+  }, [handleStop, isListening, isRecordingAudio, cancelAudioRecording, isPolicyAppended, temperature, topK, setSummaryCache]);
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
+    // Guard: Require policy acceptance before sending
+    if (!isPolicyAccepted) {
+      setIsPolicyModalOpen(true);
+      return;
+    }
+
     // If voice listening is active, stop it gracefully
     if (isListening) {
       speechService.stopListening();
@@ -963,7 +1035,7 @@ const AIPromptPage: React.FC = () => {
       // หากหน่วยความจำเต็มหรือเกือบเต็ม (9,216/9,216 หรือ tokensLeft <= 100) และไม่มีข้อความให้บีบอัดแล้ว
       if ((tokensLeft <= 100 || tokensSoFar >= maxTokens) && activeRawMessages.length < 2) {
         const confirmNewChat = window.confirm(
-          `บริบทการสนทนาเต็มแล้ว (${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens)\n\nระบบไม่สามารถรับคำสั่งเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตา On-Device Model\n\nต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้เลยหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)`
+          `บริบทการสนทนาเต็มแล้ว (${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens)\n\nระบบไม่สามารถรับคำสั่งเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตาหน่วยความจำ\n\nต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้เลยหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)`
         );
         if (confirmNewChat) {
           await handleNewChat();
@@ -1259,8 +1331,8 @@ const AIPromptPage: React.FC = () => {
               ? {
                   ...msg,
                   text:
-                    '⚠️ **หน่วยความจำบริบทเต็มแล้ว (9,216 / 9,216 Tokens)**\n\n' +
-                    'โมเดล On-Device ไม่สามารถประมวลผลคำตอบเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตา แนะนำให้คลิก **"ขึ้นแชทใหม่"** ที่แถบด้านล่าง เพื่อเริ่มต้นการสนทนาใหม่ได้อย่างราบรื่น (ประวัติแชทนี้จะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)',
+                    '**[แจ้งเตือน] หน่วยความจำบริบทเต็มแล้ว (9,216 / 9,216 Tokens)**\n\n' +
+                    'ระบบไม่สามารถประมวลผลคำตอบเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตาหน่วยความจำ แนะนำให้คลิก **"ขึ้นแชทใหม่"** ที่แถบด้านล่าง เพื่อเริ่มต้นการสนทนาใหม่ได้อย่างราบรื่น (ประวัติแชทนี้จะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)',
                   isStreaming: false,
                 }
               : msg
@@ -1334,6 +1406,12 @@ const AIPromptPage: React.FC = () => {
       setPromptHistory(sessionUserPrompts);
       setHistoryIndex(-1);
       draftInputRef.current = '';
+      if (session.savedSummary) {
+        setSummaryCache((prev) => ({
+          ...prev,
+          [session.id]: session.savedSummary!,
+        }));
+      }
       userScrolledUpRef.current = false;
       setShowScrollBottomButton(false);
       setTimeout(() => {
@@ -1356,7 +1434,7 @@ const AIPromptPage: React.FC = () => {
         topK: session.topK ?? topK,
       });
     },
-    [handleStop, isListening, isPolicyAppended, scrollToBottom, temperature, topK]
+    [handleStop, isListening, isPolicyAppended, scrollToBottom, temperature, topK, setSummaryCache]
   );
 
   // Delete a session from history
@@ -1364,11 +1442,17 @@ const AIPromptPage: React.FC = () => {
     (sessionId: string) => {
       chatHistoryService.deleteSession(sessionId);
       setSessions(chatHistoryService.getAllSessions());
+      setSummaryCache((prev) => {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
       if (sessionId === currentSessionIdRef.current) {
         handleNewChat();
       }
     },
-    [handleNewChat]
+    [handleNewChat, setSummaryCache]
   );
 
   // Rename a session
@@ -1381,8 +1465,9 @@ const AIPromptPage: React.FC = () => {
   const handleClearAllSessions = useCallback(() => {
     chatHistoryService.clearAllSessions();
     setSessions([]);
+    setSummaryCache({});
     handleNewChat();
-  }, [handleNewChat]);
+  }, [handleNewChat, setSummaryCache]);
 
   // Reset Session on settings save
   const handleSaveAndResetSession = async () => {
@@ -1525,8 +1610,6 @@ const AIPromptPage: React.FC = () => {
           onRefreshStatus={verifyAI}
           onOpenPolicy={() => setIsPolicyModalOpen(true)}
           onOpenSummary={() => setIsSummaryModalOpen(true)}
-          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
-          isSidebarOpen={isSidebarOpen}
           messagesCount={messages.length}
         />
 
@@ -1562,42 +1645,53 @@ const AIPromptPage: React.FC = () => {
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 relative"
       >
-        <div className="mx-auto max-w-4xl">
+        <div className="mx-auto max-w-3xl">
           {messages.length === 0 ? (
-            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center px-4">
-              <div className="relative mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20">
+            <div className="flex min-h-[58vh] flex-col items-center justify-center text-center px-4 py-6 sm:py-10">
+              {/* Bot Icon with glowing halo */}
+              <div className="relative mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-xl shadow-emerald-500/25 ring-4 ring-emerald-500/10">
                 <Sparkles className="h-7 w-7" />
               </div>
 
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-                เริ่มต้นสนทนากับ AI
+              <h2 className="text-3xl sm:text-4xl lg:text-[40px] font-black tracking-tight text-slate-900 leading-[1.2]">
+                ผู้ช่วยสนทนา <span className="bg-linear-to-r from-emerald-600 via-emerald-500 to-teal-600 bg-clip-text text-transparent">AI อัจฉริยะ</span> ประจำเครื่อง
               </h2>
-              <p className="mt-2 max-w-md text-xs sm:text-sm text-slate-500 leading-relaxed">
-                โมเดล On-Device ประมวลผลบนเครื่องของคุณโดยตรง (Prompt API) ปลอดภัย รวดเร็ว และเป็นส่วนตัว 100%
+              <p className="mt-3 max-w-md text-xs sm:text-sm text-slate-600 leading-relaxed font-normal">
+                ประมวลผลด้วย Prompt API ในคอมพิวเตอร์ของคุณโดยตรง ปลอดภัย และรักษาความเป็นส่วนตัวสูงสุด
               </p>
 
-              {/* Prompt Starter Cards */}
-              <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-2.5 sm:grid-cols-2 text-left">
-                {QUICK_PROMPTS.map((item, index) => {
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => handleSend(item.prompt)}
-                      className="group flex flex-col rounded-2xl border border-slate-200/90 bg-white/90 backdrop-blur-xs p-3.5 shadow-2xs transition-all duration-200 hover:border-emerald-300 hover:bg-emerald-50/30 hover:shadow-md hover:shadow-emerald-500/5 hover:-translate-y-0.5 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2 font-semibold text-slate-800 text-xs sm:text-sm group-hover:text-emerald-700 transition-colors">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors shadow-2xs shrink-0">
-                          <Icon className="h-4 w-4" />
+              {/* Prompt Starter Cards: 2x2 Clean Balanced Bento Grid */}
+              <div className="mt-8 w-full max-w-2xl text-left">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {QUICK_PROMPTS.map((item, index) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => handleSend(item.prompt)}
+                        className="group relative flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white/95 p-4 shadow-2xs transition-all duration-200 hover:border-emerald-400/80 hover:bg-emerald-50/20 hover:shadow-sm hover:-translate-y-0.5 cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 border border-emerald-200/60 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-2xs">
+                                <Icon className="h-4 w-4" />
+                              </div>
+                              <span className="font-bold text-slate-800 text-xs sm:text-[13px] group-hover:text-emerald-800 transition-colors">
+                                {item.title}
+                              </span>
+                            </div>
+                            <ArrowRight className="h-4 w-4 text-emerald-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all shrink-0" />
+                          </div>
+                          <p className="text-[12px] text-slate-500 leading-relaxed group-hover:text-slate-600">
+                            {item.prompt}
+                          </p>
                         </div>
-                        <span className="truncate">{item.title}</span>
-                      </div>
-                      <p className="mt-1.5 line-clamp-2 text-xs text-slate-500 leading-relaxed group-hover:text-slate-600">
-                        {item.prompt}
-                      </p>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           ) : (
@@ -1610,14 +1704,17 @@ const AIPromptPage: React.FC = () => {
             </div>
           )}
         </div>
+      </main>
 
-        {/* Floating Scroll-to-Bottom button when user scrolled up in an active chat */}
+      {/* Floating Bottom Input Area */}
+      <footer className="relative bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent pt-2 pb-3.5 px-3 sm:px-6 shrink-0">
+        {/* Floating Scroll-to-Bottom button positioned above input dock, NEVER overlapping messages */}
         {showScrollBottomButton && messages.length > 0 && (
-          <div className="sticky bottom-3 flex justify-end max-w-4xl mx-auto pointer-events-none px-2">
+          <div className="absolute -top-10 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
             <button
               type="button"
               onClick={() => scrollToBottom(true)}
-              className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-md border border-slate-200/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 transition active:scale-95 cursor-pointer animate-in fade-in duration-150 z-20"
+              className="flex items-center gap-1.5 rounded-full bg-white/95 backdrop-blur-md px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-lg border border-slate-200/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 hover:shadow-xl transition-all active:scale-95 cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-150"
               title="เลื่อนลงล่างสุด"
             >
               <ArrowDown className="h-3.5 w-3.5 text-emerald-600" />
@@ -1625,11 +1722,8 @@ const AIPromptPage: React.FC = () => {
             </button>
           </div>
         )}
-      </main>
 
-      {/* Floating Bottom Input Area */}
-      <footer className="relative bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent pt-2 pb-3.5 px-3 sm:px-6 shrink-0">
-        <div className="mx-auto max-w-3xl sm:max-w-4xl space-y-2">
+        <div className="mx-auto max-w-3xl space-y-2">
           {/* Context Notice / Warning: แจ้งเตือนเมื่อแตะ >= 85% หรือเหลือ <= 1200T ให้ผู้ใช้ทราบและเลือกบีบอัดเองได้ตามต้องการ */}
           {(contextPercentage >= 85 || tokensLeft <= 1200) && messages.length > 0 && (
             <div
@@ -1687,15 +1781,34 @@ const AIPromptPage: React.FC = () => {
             </div>
           )}
 
+          {/* Policy Acceptance Requirement Warning */}
+          {!isPolicyAccepted && (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-3.5 py-2.5 text-xs text-amber-900 shadow-2xs animate-in fade-in duration-150">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+                <span className="font-medium">
+                  คุณจำเป็นต้องยอมรับข้อตกลงความปลอดภัย AI ก่อนเริ่มสนทนา เพื่อให้สอดคล้องตามมาตรฐานความปลอดภัย
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPolicyModalOpen(true)}
+                className="shrink-0 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-amber-700 active:scale-95 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              >
+                อ่านและยอมรับข้อตกลง
+              </button>
+            </div>
+          )}
+
           {/* Floating Glass Input Island */}
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`relative rounded-3xl border bg-white/95 backdrop-blur-xl transition-all duration-200 p-2.5 sm:p-3 shadow-[0_4px_24px_rgba(0,0,0,0.06)] ${
+            className={`relative rounded-2xl sm:rounded-3xl border bg-white/95 backdrop-blur-xl transition-all duration-200 p-2 sm:p-2.5 shadow-[0_2px_16px_rgba(0,0,0,0.04)] ${
               isDragging
-                ? 'border-emerald-500 bg-emerald-50/60 ring-4 ring-emerald-500/20 shadow-lg'
-                : 'border-slate-200/90 hover:border-slate-300 focus-within:border-emerald-500/70 focus-within:shadow-[0_8px_30px_rgba(16,185,129,0.12)] focus-within:ring-4 focus-within:ring-emerald-500/10'
+                ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20 shadow-lg'
+                : 'border-slate-200/90 hover:border-slate-300 focus-within:border-emerald-500/60 focus-within:ring-2 focus-within:ring-emerald-500/15 focus-within:shadow-[0_4px_20px_rgba(16,185,129,0.08)]'
             }`}
           >
             {/* Attached Images Preview Shelf */}
@@ -1816,18 +1929,19 @@ const AIPromptPage: React.FC = () => {
                       setIsListening(false);
                       setInterimTranscript('');
                     }}
-                    className="rounded-lg bg-white border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                    className="flex items-center gap-1 rounded-lg bg-white border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                     title="สลับภาษาพูดระหว่าง ภาษาไทย และ English"
                   >
-                    {speechLang === 'th-TH' ? '🇹🇭 ไทย' : '🇺🇸 EN'}
+                    <Globe className="h-3 w-3" />
+                    <span>{speechLang === 'th-TH' ? 'ไทย (TH)' : 'EN (US)'}</span>
                   </button>
 
                   {speechLang.startsWith('en') && isLocalSpeechSupported && (
                     <span
                       className="hidden sm:inline-block rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300/80 px-1.5 py-0.5 text-[10px] font-medium"
-                      title="ประมวลผลเสียงภาษาอังกฤษบนเครื่อง On-Device ด้วย Small Expert Model"
+                      title="ประมวลผลเสียงภาษาอังกฤษในเครื่องด้วย Local Model"
                     >
-                      On-Device
+                      Local Model
                     </span>
                   )}
 
@@ -1868,86 +1982,113 @@ const AIPromptPage: React.FC = () => {
               rows={1}
               value={inputMessage}
               autoFocus
+              disabled={!isPolicyAccepted || isGenerating}
               onChange={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder="พิมพ์ข้อความของคุณที่นี่... (รองรับการส่งภาพหลายรูปและเสียง หรือกด Shift+Enter ขึ้นบรรทัดใหม่)"
-              className="max-h-40 min-h-11 w-full resize-none border-0 bg-transparent px-3 py-1.5 text-sm sm:text-[14.5px] text-slate-800 placeholder-slate-400 focus:outline-hidden leading-relaxed"
+              placeholder={
+                !isPolicyAccepted
+                  ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนเริ่มพิมพ์ข้อความ...'
+                  : 'พิมพ์ข้อความสนทนา... (Shift+Enter ขึ้นบรรทัดใหม่ หรือวางไฟล์รูป/เสียง)'
+              }
+              className="max-h-36 min-h-9.5 w-full resize-none border-0 bg-transparent px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-400/80 focus:outline-hidden leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
             />
 
             {/* Bottom Inner Toolbar */}
-            <div className="flex items-center justify-between pt-1 border-t border-slate-100/80 mt-1 px-1">
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100 mt-0.5 px-0.5">
               {/* Left Action Buttons & Subtle Token Indicator */}
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
                 {/* Voice Typing Button (Speech-to-Text) */}
                 <button
                   type="button"
                   onClick={handleToggleListening}
-                  disabled={isGenerating || !isSpeechSupported || isRecordingAudio}
-                  title={
-                    !isSpeechSupported
-                      ? 'เบราว์เซอร์นี้ไม่รองรับระบบ Speech Recognition'
+                  disabled={!isPolicyAccepted || isGenerating || !isSpeechSupported || isRecordingAudio}
+                  aria-label={
+                    !isPolicyAccepted
+                      ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน'
+                      : !isSpeechSupported
+                      ? 'เบราว์เซอร์นี้ไม่รองรับระบบการพิมพ์ด้วยเสียง'
                       : isListening
                       ? 'กำลังฟังเสียง... (คลิกเพื่อหยุด)'
-                      : `พิมพ์ด้วยเสียง STT (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
+                      : `พิมพ์ด้วยเสียง (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
                   }
-                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                  title={
+                    !isPolicyAccepted
+                      ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน'
+                      : !isSpeechSupported
+                      ? 'เบราว์เซอร์นี้ไม่รองรับระบบการพิมพ์ด้วยเสียง'
+                      : isListening
+                      ? 'กำลังฟังเสียง... (คลิกเพื่อหยุด)'
+                      : `พิมพ์ด้วยเสียง (คลิกเพื่อพูด - ${speechLang === 'th-TH' ? 'ภาษาไทย' : 'English'})`
+                  }
+                  className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                     isListening
                       ? 'border border-rose-500 bg-rose-500 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
                       : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
-                  {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                 </button>
 
                 {/* Direct Audio Recording Button (Prompt API Multimodal Audio) */}
                 <button
                   type="button"
                   onClick={isRecordingAudio ? stopAudioRecording : startAudioRecording}
-                  disabled={isGenerating || isListening}
-                  title={
-                    isRecordingAudio
+                  disabled={!isPolicyAccepted || isGenerating || isListening}
+                  aria-label={
+                    !isPolicyAccepted
+                      ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน'
+                      : isRecordingAudio
                       ? 'กำลังบันทึกเสียงสด... (คลิกเพื่อเสร็จสิ้น)'
-                      : 'บันทึกเสียงสดส่งตรงให้ AI (Prompt API Multimodal Audio)'
+                      : 'บันทึกเสียงสดส่งตรงให้โมเดล AI (Prompt API Audio)'
                   }
-                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                  title={
+                    !isPolicyAccepted
+                      ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน'
+                      : isRecordingAudio
+                      ? 'กำลังบันทึกเสียงสด... (คลิกเพื่อเสร็จสิ้น)'
+                      : 'บันทึกเสียงสดส่งตรงให้โมเดล AI (Prompt API Audio)'
+                  }
+                  className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 ${
                     isRecordingAudio
                       ? 'border border-rose-600 bg-rose-600 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
                       : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
-                  <Radio className="h-4 w-4" />
+                  <Radio className="h-3.5 w-3.5" />
                 </button>
 
                 {/* Audio File Attach Button */}
                 <button
                   type="button"
                   onClick={() => audioFileInputRef.current?.click()}
-                  disabled={isGenerating}
-                  title="แนบไฟล์เสียง (MP3, WAV, WebM ฯลฯ สำหรับ Audio Multimodal)"
-                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                  disabled={!isPolicyAccepted || isGenerating}
+                  aria-label={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน' : 'แนบไฟล์เสียง (Audio Multimodal)'}
+                  title={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน' : 'แนบไฟล์เสียง (MP3, WAV, WebM ฯลฯ)'}
+                  className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
                     selectedAudio
                       ? 'border border-teal-500 bg-teal-50 text-teal-700 ring-2 ring-teal-400/20'
                       : 'text-slate-400 hover:text-teal-700 hover:bg-teal-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
-                  <Music className="h-4 w-4" />
+                  <Music className="h-3.5 w-3.5" />
                 </button>
 
                 {/* Image Attach Button (Multiple) */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isGenerating}
-                  title="แนบรูปภาพ (รองรับหลายรูปพร้อมกัน หรือกด Ctrl+V เพื่อวางรูป)"
-                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer ${
+                  disabled={!isPolicyAccepted || isGenerating}
+                  aria-label={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน' : 'แนบรูปภาพ (Visual Multimodal)'}
+                  title={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนใช้งาน' : 'แนบรูปภาพ (PNG, JPEG, WebP หรือกด Ctrl+V เพื่อวางรูป)'}
+                  className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                     selectedImages.length > 0
                       ? 'border border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
                       : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <div className="relative">
-                    <ImageIcon className="h-4 w-4" />
+                    <ImageIcon className="h-3.5 w-3.5" />
                     {selectedImages.length > 1 && (
                       <span className="absolute -top-1.5 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-600 text-[9px] font-bold text-white">
                         {selectedImages.length}
@@ -1956,17 +2097,17 @@ const AIPromptPage: React.FC = () => {
                   </div>
                 </button>
 
-                <div className="h-3.5 w-px bg-slate-200/80 mx-0.5 hidden sm:block" />
+                <div className="h-3.5 w-px bg-slate-200/80 mx-1 hidden sm:block" />
 
                 {/* Subtle Token Usage Badge */}
                 <div
-                  className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium px-2 py-0.5 rounded-full hover:bg-slate-100/70 transition cursor-default select-none"
+                  className="flex items-center gap-1.5 text-[10.5px] text-slate-500 font-medium px-2 py-0.5 rounded-full bg-slate-100/80 border border-slate-200/60 hover:bg-slate-200/60 transition cursor-default select-none shadow-2xs"
                   title={`การใช้หน่วยความจำบริบท: ${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens (${contextPercentage}%) • คงเหลือ ${tokensLeft.toLocaleString()} Tokens`}
                 >
                   <Gauge className="h-3 w-3 text-emerald-600 shrink-0" />
-                  <span className="hidden sm:inline">{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T</span>
+                  <span className="hidden sm:inline font-mono">{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T</span>
                   <span
-                    className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold ${
+                    className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold font-mono ${
                       contextPercentage >= 95
                         ? 'bg-rose-100 text-rose-700'
                         : contextPercentage >= 80
@@ -1979,14 +2120,15 @@ const AIPromptPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Right: Character count + Send/Stop Button */}
+              {/* Right: Send/Stop Button */}
               <div className="flex items-center gap-2">
                 {isGenerating ? (
                   <button
                     type="button"
                     onClick={handleStop}
-                    title="หยุดการสร้างข้อความ"
-                    className="flex h-8.5 w-8.5 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs hover:bg-rose-600 active:scale-95 transition cursor-pointer"
+                    aria-label="หยุดการประมวลผลคำตอบ"
+                    title="หยุดการประมวลผลคำตอบ"
+                    className="flex h-8 w-8 items-center justify-center rounded-xl bg-linear-to-tr from-rose-600 to-rose-500 text-white shadow-sm shadow-rose-600/20 hover:brightness-105 active:scale-95 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                   >
                     <Square className="h-3.5 w-3.5 fill-white" />
                   </button>
@@ -1994,9 +2136,10 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleSend()}
-                    disabled={!inputMessage.trim() && selectedImages.length === 0 && !selectedAudio}
-                    title="ส่งข้อความ"
-                    className="flex h-8.5 w-8.5 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs hover:bg-emerald-700 active:scale-95 disabled:opacity-25 disabled:hover:bg-emerald-600 disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed"
+                    disabled={!isPolicyAccepted || (!inputMessage.trim() && selectedImages.length === 0 && !selectedAudio)}
+                    aria-label={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนส่งข้อความ' : 'ส่งข้อความ (Enter)'}
+                    title={!isPolicyAccepted ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนส่งข้อความ' : 'ส่งข้อความ (Enter)'}
+                    className="flex h-8 w-8 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 to-teal-600 text-white shadow-sm shadow-emerald-600/20 hover:shadow-md hover:brightness-105 active:scale-95 disabled:bg-none disabled:bg-slate-100 disabled:text-slate-300 disabled:shadow-none transition-all cursor-pointer disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                   >
                     <Send className="h-3.5 w-3.5" />
                   </button>
@@ -2007,56 +2150,72 @@ const AIPromptPage: React.FC = () => {
 
           {/* Micro Footer Caption */}
           <div className="text-center text-[11px] text-slate-400/80 px-2 select-none">
-            Google Chrome Built-in AI • ประมวลผลบนเครื่อง (On-Device) ปลอดภัยและเป็นส่วนตัว 100%
+            Google Chrome Built-in AI • ประมวลผลในเครื่องของคุณ ปลอดภัยและเป็นส่วนตัว 100%
           </div>
         </div>
       </footer>
     </div>
 
       {/* Policy Modal (เปิดแจ้งเตือนอัตโนมัติก่อนเริ่มแชทตอนโหลดหน้าครั้งแรก) */}
-      <PolicyModal
-        isOpen={isPolicyModalOpen}
-        onClose={() => setIsPolicyModalOpen(false)}
-        onAccept={handleAcceptPolicy}
-        onAppendToPrompt={handleTogglePolicyInPrompt}
-        isAppended={isPolicyAppended}
-      />
+      {isPolicyModalOpen && (
+        <React.Suspense fallback={null}>
+          <PolicyModal
+            isOpen={isPolicyModalOpen}
+            onClose={() => setIsPolicyModalOpen(false)}
+            onAccept={handleAcceptPolicy}
+            onRevoke={handleRevokePolicy}
+            isAlreadyAccepted={isPolicyAccepted}
+            onAppendToPrompt={handleTogglePolicyInPrompt}
+            isAppended={isPolicyAppended}
+          />
+        </React.Suspense>
+      )}
 
       {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        systemPrompt={systemPrompt}
-        setSystemPrompt={setSystemPrompt}
-        temperature={temperature}
-        setTemperature={setTemperature}
-        topK={topK}
-        setTopK={setTopK}
-        onSaveAndReset={handleSaveAndResetSession}
-        messagesCount={messages.length}
-        conversationChars={conversationChars}
-        onOpenPolicy={() => setIsPolicyModalOpen(true)}
-        activeModelName={activeModelInfo.modelName}
-        isProfanityFilterEnabled={isProfanityFilterActive}
-        setIsProfanityFilterEnabled={(enabled) => {
-          setIsProfanityFilterActive(enabled);
-          setProfanityFilterEnabled(enabled);
-        }}
-      />
+      {isSettingsOpen && (
+        <React.Suspense fallback={null}>
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            systemPrompt={systemPrompt}
+            setSystemPrompt={setSystemPrompt}
+            temperature={temperature}
+            setTemperature={setTemperature}
+            topK={topK}
+            setTopK={setTopK}
+            onSaveAndReset={handleSaveAndResetSession}
+            messagesCount={messages.length}
+            conversationChars={conversationChars}
+            onOpenPolicy={() => setIsPolicyModalOpen(true)}
+            activeModelName={activeModelInfo.modelName}
+            isProfanityFilterEnabled={isProfanityFilterActive}
+            setIsProfanityFilterEnabled={(enabled) => {
+              setIsProfanityFilterActive(enabled);
+              setProfanityFilterEnabled(enabled);
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {/* Summary Modal */}
-      <SummaryModal
-        isOpen={isSummaryModalOpen}
-        onClose={() => setIsSummaryModalOpen(false)}
-        messages={summaryModalMessages}
-        uncompactedCount={messages.filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()).length}
-        onCompressAndContinue={async () => {
-          await handleCompressChatContext();
-        }}
-        onNewChat={handleNewChat}
-        isCompressing={isCompressingContext}
-        modelName={activeModelInfo.modelName}
-      />
+      {isSummaryModalOpen && (
+        <React.Suspense fallback={null}>
+          <SummaryModal
+            isOpen={isSummaryModalOpen}
+            onClose={() => setIsSummaryModalOpen(false)}
+            messages={summaryModalMessages}
+            uncompactedCount={messages.filter((m) => !m.isCompressedContext && !m.isCompacted && m.text.trim()).length}
+            onCompressAndContinue={async () => {
+              await handleCompressChatContext();
+            }}
+            onNewChat={handleNewChat}
+            isCompressing={isCompressingContext}
+            modelName={activeModelInfo.modelName}
+            savedSummary={activeCachedSummary}
+            onSaveSummary={handleSaveSummary}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 };

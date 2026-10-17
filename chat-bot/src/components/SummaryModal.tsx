@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Sparkles,
@@ -11,6 +11,9 @@ import {
   Layers,
   ArrowRight,
   Plus,
+  ListChecks,
+  Target,
+  Heading,
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -21,9 +24,12 @@ import {
   type EngineUsedType,
 } from '../services/summarizer-service';
 import type { AISummarizerType, AISummarizerLength } from '../types/ai';
+import type { CachedSessionSummary } from '../types/chat-history';
 import { stripMarkdown } from '../utils/markdown';
 
-interface SummaryModalProps {
+export type { CachedSessionSummary };
+
+export interface SummaryModalProps {
   isOpen: boolean;
   onClose: () => void;
   messages: Array<{ sender: 'user' | 'ai'; text: string }>;
@@ -32,6 +38,8 @@ interface SummaryModalProps {
   onNewChat?: () => void;
   isCompressing?: boolean;
   modelName?: string;
+  savedSummary?: CachedSessionSummary | null;
+  onSaveSummary?: (summary: CachedSessionSummary) => void;
 }
 
 export const SummaryModal: React.FC<SummaryModalProps> = ({
@@ -43,22 +51,32 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   onNewChat,
   isCompressing = false,
   modelName,
+  savedSummary,
+  onSaveSummary,
 }) => {
-  const [summaryType, setSummaryType] = useState<AISummarizerType>('key-points');
-  const [summaryLength, setSummaryLength] = useState<AISummarizerLength>('medium');
-  const [summaryContent, setSummaryContent] = useState<string>('');
+  const [summaryType, setSummaryType] = useState<AISummarizerType>(
+    () => savedSummary?.type ?? 'key-points'
+  );
+  const [summaryLength, setSummaryLength] = useState<AISummarizerLength>(
+    () => savedSummary?.length ?? 'medium'
+  );
+  const [summaryContent, setSummaryContent] = useState<string>(
+    () => savedSummary?.content ?? ''
+  );
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  const [activeEngine, setActiveEngine] = useState<EngineUsedType | null>(null);
+  const [activeEngine, setActiveEngine] = useState<EngineUsedType | null>(
+    () => savedSummary?.engine ?? null
+  );
   const [engineState, setEngineState] = useState<SummarizerState>({
     status: 'mock',
     statusMessage: 'กำลังตรวจสอบ...',
     isNative: false,
   });
 
-  const [regenerateCounter, setRegenerateCounter] = useState<number>(0);
   const activeControllerRef = useRef<AbortController | null>(null);
   const contentContainerRef = useRef<HTMLDivElement>(null);
+  const hasTriggeredInitialRef = useRef<boolean>(false);
 
   // Auto-scroll content area as new summary chunks stream in
   useEffect(() => {
@@ -81,13 +99,78 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
     };
   }, []);
 
-  // Reactive summarization effect
+
+  // Execute summarization with explicit type & length
+  const executeSummarization = useCallback(
+    async (targetType: AISummarizerType, targetLength: AISummarizerLength) => {
+      if (messages.length === 0) {
+        setSummaryContent('ไม่มีข้อความในการสนทนาสำหรับการสรุป');
+        setIsLoading(false);
+        return;
+      }
+
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      activeControllerRef.current = controller;
+
+      setIsLoading(true);
+      setSummaryContent('');
+
+      try {
+        const options: SummarizeOptions = {
+          type: targetType,
+          format: 'markdown',
+          length: targetLength,
+          signal: controller.signal,
+          onChunk: (chunk) => {
+            if (!controller.signal.aborted) {
+              setSummaryContent(chunk);
+            }
+          },
+        };
+
+        const result = await summarizerService.summarizeChat(messages, options);
+        if (!controller.signal.aborted) {
+          const usedEngine = summarizerService.getLastEngineUsed();
+          setSummaryContent(result);
+          setActiveEngine(usedEngine);
+          onSaveSummary?.({
+            content: result,
+            type: targetType,
+            length: targetLength,
+            engine: usedEngine,
+            messageCount: messages.length,
+            createdAt: Date.now(),
+          });
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name !== 'AbortError' && !controller.signal.aborted) {
+          console.error('Summarization failed:', err);
+          setSummaryContent('เกิดข้อผิดพลาดในการสรุปเนื้อหา กรุณาลองใหม่อีกครั้ง');
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [messages, onSaveSummary]
+  );
+
+  // Initial trigger: only run if no locked summary exists yet
   useEffect(() => {
     if (!isOpen) {
       if (activeControllerRef.current) {
         activeControllerRef.current.abort();
         activeControllerRef.current = null;
       }
+      return;
+    }
+
+    // If an answer is already locked, DO NOT auto-generate
+    if (summaryContent || savedSummary?.content) {
       return;
     }
 
@@ -99,51 +182,33 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
       return () => clearTimeout(emptyTimer);
     }
 
-    const controller = new AbortController();
-    activeControllerRef.current = controller;
-    let isCancelled = false;
+    if (!hasTriggeredInitialRef.current) {
+      hasTriggeredInitialRef.current = true;
+      executeSummarization(summaryType, summaryLength);
+    }
+  }, [isOpen, summaryContent, savedSummary, messages, summaryType, summaryLength, executeSummarization]);
 
-    const timer = setTimeout(async () => {
-      setIsLoading(true);
-      setSummaryContent('');
-
-      try {
-        const options: SummarizeOptions = {
-          type: summaryType,
-          format: 'markdown',
-          length: summaryLength,
-          signal: controller.signal,
-          onChunk: (chunk) => {
-            if (!isCancelled) {
-              setSummaryContent(chunk);
-            }
-          },
-        };
-
-        const result = await summarizerService.summarizeChat(messages, options);
-        if (!isCancelled && !controller.signal.aborted) {
-          setSummaryContent(result);
-          setActiveEngine(summarizerService.getLastEngineUsed());
-        }
-      } catch (err: unknown) {
-        if (!isCancelled && (err as Error)?.name !== 'AbortError') {
-          console.error('Summarization failed:', err);
-          setSummaryContent('เกิดข้อผิดพลาดในการสรุปเนื้อหา กรุณาลองใหม่อีกครั้ง');
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false);
-        }
-      }
-    }, 0);
-
+  // Clean abort on unmount
+  useEffect(() => {
     return () => {
-      isCancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-      setIsLoading(false);
+      if (activeControllerRef.current) {
+        activeControllerRef.current.abort();
+        activeControllerRef.current = null;
+      }
     };
-  }, [isOpen, summaryType, summaryLength, messages, regenerateCounter]);
+  }, []);
+
+  const handleSelectType = (newType: AISummarizerType) => {
+    if (newType === summaryType && summaryContent) return;
+    setSummaryType(newType);
+    executeSummarization(newType, summaryLength);
+  };
+
+  const handleSelectLength = (newLength: AISummarizerLength) => {
+    if (newLength === summaryLength && summaryContent) return;
+    setSummaryLength(newLength);
+    executeSummarization(summaryType, newLength);
+  };
 
   if (!isOpen) return null;
 
@@ -167,12 +232,12 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4 animate-in fade-in">
-      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4 animate-in fade-in">
+      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-6 py-4.5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
@@ -219,36 +284,39 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
             <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
               <button
                 type="button"
-                onClick={() => setSummaryType('key-points')}
-                className={`rounded-lg px-2.5 py-1 font-medium transition cursor-pointer ${
+                onClick={() => handleSelectType('key-points')}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-medium transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   summaryType === 'key-points'
                     ? 'bg-white text-emerald-700 shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📋 ประเด็นสำคัญ
+                <ListChecks className="h-3.5 w-3.5 text-emerald-600" />
+                <span>ประเด็นสำคัญ</span>
               </button>
               <button
                 type="button"
-                onClick={() => setSummaryType('tl;dr')}
-                className={`rounded-lg px-2.5 py-1 font-medium transition cursor-pointer ${
+                onClick={() => handleSelectType('tl;dr')}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-medium transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   summaryType === 'tl;dr'
                     ? 'bg-white text-emerald-700 shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📌 ใจความหลัก
+                <Target className="h-3.5 w-3.5 text-emerald-600" />
+                <span>ใจความหลัก</span>
               </button>
               <button
                 type="button"
-                onClick={() => setSummaryType('headline')}
-                className={`rounded-lg px-2.5 py-1 font-medium transition cursor-pointer ${
+                onClick={() => handleSelectType('headline')}
+                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-medium transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                   summaryType === 'headline'
                     ? 'bg-white text-emerald-700 shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                📰 หัวข้อ
+                <Heading className="h-3.5 w-3.5 text-emerald-600" />
+                <span>หัวข้อ</span>
               </button>
             </div>
 
@@ -260,7 +328,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   <button
                     key={len}
                     type="button"
-                    onClick={() => setSummaryLength(len)}
+                    onClick={() => handleSelectLength(len)}
                     className={`rounded-md px-2 py-0.5 text-[11px] capitalize transition cursor-pointer ${
                       summaryLength === len
                         ? 'bg-white text-emerald-700 font-bold shadow-2xs'
@@ -280,7 +348,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           {isLoading && !summaryContent ? (
             <div className="flex min-h-50 flex-col items-center justify-center gap-3 text-slate-400">
               <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-              <p className="text-xs font-medium text-slate-500">กำลังประมวลผลสรุปเนื้อหาด้วย On-Device AI...</p>
+              <p className="text-xs font-medium text-slate-500">กำลังประมวลผลสรุปเนื้อหาด้วย Chrome Built-in AI...</p>
             </div>
           ) : (
             <div className="relative min-h-45 rounded-xl bg-slate-50/70 p-4 border border-slate-200/60 leading-relaxed min-w-0 max-w-full wrap-break-word overflow-hidden">
@@ -320,9 +388,10 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <button
               type="button"
-              onClick={() => setRegenerateCounter((c) => c + 1)}
+              onClick={() => executeSummarization(summaryType, summaryLength)}
               disabled={isLoading || messages.length === 0}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
+              title="สร้างสรุปใหม่"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-600' : ''}`} />
               <span>สร้างใหม่</span>
@@ -350,7 +419,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
               type="button"
               onClick={handleDownload}
               disabled={!summaryContent || isLoading}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50 transition"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
+              title="ดาวน์โหลดเป็นไฟล์ Markdown (.md)"
             >
               <FileDown className="h-3.5 w-3.5" />
               <span>ดาวน์โหลด</span>
@@ -358,7 +428,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           </div>
 
           {/* Action Buttons: New Chat & Compress */}
-          <div className="flex flex-wrap items-center gap-1 w-full sm:w-auto">
+          <div className="flex items-center gap-2 shrink-0">
             {onNewChat && (
               <button
                 type="button"
@@ -366,8 +436,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   onClose();
                   onNewChat();
                 }}
-                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-emerald-400 active:scale-95 transition cursor-pointer"
-                title="เริ่มการสนทนาในห้องแชทใหม่ (ระบบจะบันทึกประวัติแชทเดิมไว้ในแถบประวัติด้านข้าง)"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition cursor-pointer"
+                title="เริ่มการสนทนาในห้องแชทใหม่ (ประวัติเดิมจะถูกบันทึกไว้ในแถบประวัติ)"
               >
                 <Plus className="h-3.5 w-3.5 text-emerald-600" />
                 <span>แชทใหม่</span>
@@ -382,14 +452,15 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   onClose();
                 }}
                 disabled={isCompressing || messages.length === 0 || uncompactedCount === 0}
-                className="flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl bg-linear-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 active:scale-95 disabled:opacity-50 transition cursor-pointer disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-linear-to-r from-emerald-600 to-teal-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:from-emerald-700 hover:to-teal-700 active:scale-95 disabled:opacity-50 transition cursor-pointer disabled:cursor-not-allowed"
+                title="บีบอัดประวัติการสนทนานี้เพื่อประหยัดบริบทและสนทนาต่อ"
               >
                 <span>
                   {isCompressing
                     ? 'กำลังบีบอัด...'
                     : uncompactedCount === 0
                     ? 'บีบอัดแล้ว'
-                    : 'บีบอัดและสนทนาต่อ'}
+                    : 'บีบอัดและคุยต่อ'}
                 </span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
