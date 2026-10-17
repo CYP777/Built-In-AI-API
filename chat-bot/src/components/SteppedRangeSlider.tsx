@@ -62,8 +62,9 @@ export const SteppedRangeSlider: React.FC<SteppedRangeSliderProps> = ({
                 className={`absolute top-0 -translate-x-1/2 text-[10px] sm:text-xs transition-all cursor-pointer ${
                   isSelected
                     ? 'font-bold text-emerald-700 scale-110'
-                    : 'text-slate-500 hover:text-slate-800 font-medium'
+                    : 'text-slate-600 hover:text-slate-900 font-medium'
                 }`}
+                aria-label={`เลือกค่า ${tick}`}
                 title={`เลือก ${tick}`}
               >
                 {formatTick ? formatTick(tick) : tick}
@@ -73,7 +74,7 @@ export const SteppedRangeSlider: React.FC<SteppedRangeSliderProps> = ({
         </div>
 
         {/* Interactive track with dots and thumb */}
-        <div className="relative flex items-center h-8 select-none">
+        <div className="relative flex items-center h-8 select-none group">
           {/* Base track */}
           <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden relative">
             {/* Active filled track */}
@@ -103,7 +104,7 @@ export const SteppedRangeSlider: React.FC<SteppedRangeSliderProps> = ({
           {/* Thumb */}
           <div
             style={{ left: `${percentage}%` }}
-            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-6 w-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center pointer-events-none transition-transform duration-75"
+            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-6 w-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center pointer-events-none transition-transform duration-75 group-has-[:focus-visible]:scale-115 group-has-[:focus-visible]:ring-3 group-has-[:focus-visible]:ring-emerald-500 group-has-[:focus-visible]:ring-offset-2"
           >
             <div className="h-2 w-2 rounded-full bg-emerald-600/30" />
           </div>
@@ -116,14 +117,14 @@ export const SteppedRangeSlider: React.FC<SteppedRangeSliderProps> = ({
             step={step}
             value={value}
             onChange={(e) => onChange(parseFloat(e.target.value))}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 focus-visible:outline-none"
             aria-label={label}
           />
         </div>
 
         {/* Min / Max Labels */}
         {(minLabel || maxLabel) && (
-          <div className="flex justify-between text-[11px] text-slate-400 pt-1">
+          <div className="flex justify-between text-[11px] text-slate-600 pt-1">
             <span>{minLabel}</span>
             <span>{maxLabel}</span>
           </div>
@@ -132,7 +133,7 @@ export const SteppedRangeSlider: React.FC<SteppedRangeSliderProps> = ({
 
       {/* Description */}
       {description && (
-        <p className="text-[11px] text-slate-500 leading-relaxed pt-0.5">
+        <p className="text-[11px] text-slate-600 leading-relaxed pt-0.5">
           {description}
         </p>
       )}

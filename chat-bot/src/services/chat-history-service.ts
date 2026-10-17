@@ -1,5 +1,6 @@
 import type { ChatSession, CachedSessionSummary } from '../types/chat-history';
 import type { Message } from '../components/ChatMessage';
+import { generateId } from '../utils/id';
 import {
   saveSessionToDB,
   deleteSessionFromDB,
@@ -123,7 +124,7 @@ export function createSession(
   initialMessages: Message[] = [],
   options?: { systemPrompt?: string; temperature?: number; topK?: number }
 ): ChatSession {
-  const id = `session-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const id = generateId('session');
   const now = Date.now();
 
   const sanitizedMessages = initialMessages.map(sanitizeMessageForIndexedDB);

@@ -96,7 +96,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 sm:px-3 py-1 text-xs font-semibold text-amber-700 border border-amber-500/20 hover:bg-amber-500/20 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1"
             onClick={onOpenSettings}
           >
-            <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+            <AlertCircle className="h-3.5 w-3.5 text-amber-700 shrink-0" />
             <span>โหมดจำลอง</span>
           </button>
         );
@@ -125,9 +125,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             disabled={isSpinning}
             aria-label="ตรวจสอบสถานะ Built-in AI ใหม่"
             title="ตรวจสอบสถานะ Built-in AI ใหม่"
-            className="flex items-center justify-center p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-slate-100 rounded-lg transition-all active:scale-90 cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            className="flex items-center justify-center p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-lg transition-all active:scale-90 cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning ? 'animate-spin text-emerald-600' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning ? 'animate-spin text-emerald-700' : ''}`} />
           </button>
         </div>
 
@@ -140,7 +140,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             title="ดูข้อกำหนดและนโยบายความปลอดภัย AI"
             className="flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
           >
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />
             <span className="hidden md:inline">นโยบายความปลอดภัย</span>
           </button>
         )}
@@ -167,7 +167,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             title={messagesCount === 0 ? 'ยังไม่มีข้อความสำหรับการสรุป' : 'สรุปเนื้อหาบทสนทนาด้วย Summarizer API'}
             className="flex items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 px-3 py-1.5 text-xs font-semibold shadow-2xs hover:border-emerald-500/40 transition-all active:scale-95 cursor-pointer disabled:opacity-40 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
           >
-            <FileText className="h-3.5 w-3.5 text-emerald-600" />
+            <FileText className="h-3.5 w-3.5 text-emerald-700" />
             <span className="hidden sm:inline">สรุปบทสนทนา</span>
           </button>
         )}

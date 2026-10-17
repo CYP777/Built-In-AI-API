@@ -210,6 +210,18 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
     executeSummarization(summaryType, newLength);
   };
 
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleCopy = () => {
@@ -232,17 +244,25 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4 animate-in fade-in">
-      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="summary-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4 animate-in fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800 animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-6 py-4.5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-500/20">
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
+                <h2 id="summary-modal-title" className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
                   สรุปการสนทนา
                 </h2>
                 {activeEngine === 'native' || (!activeEngine && engineState.isNative) ? (
@@ -262,7 +282,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-600">
                 ประมวลผลสรุปเนื้อหาบทสนทนา {messages.length} ข้อความ ด้วย AI บนอุปกรณ์ของคุณ
               </p>
             </div>
@@ -270,8 +290,9 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
-            title="ปิด"
+            aria-label="ปิดหน้าต่างสรุปการสนทนา"
+            title="ปิดหน้าต่างสรุปการสนทนา"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
             <X className="h-5 w-5" />
           </button>
@@ -291,7 +312,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <ListChecks className="h-3.5 w-3.5 text-emerald-600" />
+                <ListChecks className="h-3.5 w-3.5 text-emerald-700" />
                 <span>ประเด็นสำคัญ</span>
               </button>
               <button
@@ -303,7 +324,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <Target className="h-3.5 w-3.5 text-emerald-600" />
+                <Target className="h-3.5 w-3.5 text-emerald-700" />
                 <span>ใจความหลัก</span>
               </button>
               <button
@@ -315,13 +336,13 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <Heading className="h-3.5 w-3.5 text-emerald-600" />
+                <Heading className="h-3.5 w-3.5 text-emerald-700" />
                 <span>หัวข้อ</span>
               </button>
             </div>
 
             {/* Length Selector */}
-            <div className="flex items-center gap-1.5 text-slate-500">
+            <div className="flex items-center gap-1.5 text-slate-600">
               <span className="text-[11px] font-medium">ความยาว:</span>
               <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
                 {(['short', 'medium', 'long'] as AISummarizerLength[]).map((len) => (
@@ -332,7 +353,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                     className={`rounded-md px-2 py-0.5 text-[11px] capitalize transition cursor-pointer ${
                       summaryLength === len
                         ? 'bg-white text-emerald-700 font-bold shadow-2xs'
-                        : 'text-slate-500 hover:text-slate-800'
+                        : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     {len === 'short' ? 'สั้น' : len === 'medium' ? 'ปานกลาง' : 'ละเอียด'}
@@ -346,9 +367,9 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
         {/* Content Body */}
         <div ref={contentContainerRef} className="flex-1 overflow-y-auto p-6 text-sm text-slate-700">
           {isLoading && !summaryContent ? (
-            <div className="flex min-h-50 flex-col items-center justify-center gap-3 text-slate-400">
-              <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-              <p className="text-xs font-medium text-slate-500">กำลังประมวลผลสรุปเนื้อหาด้วย Chrome Built-in AI...</p>
+            <div className="flex min-h-50 flex-col items-center justify-center gap-3 text-slate-600">
+              <RefreshCw className="h-8 w-8 animate-spin text-emerald-700" />
+              <p className="text-xs font-medium text-slate-700">กำลังประมวลผลสรุปเนื้อหาด้วย Chrome Built-in AI...</p>
             </div>
           ) : (
             <div className="relative min-h-45 rounded-xl bg-slate-50/70 p-4 border border-slate-200/60 leading-relaxed min-w-0 max-w-full wrap-break-word overflow-hidden">
@@ -369,9 +390,9 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                   {summaryContent}
                 </Markdown>
               ) : (
-                <div className="flex min-h-37.5 flex-col items-center justify-center text-center p-4 text-slate-500">
-                  <p className="font-semibold text-slate-700 mb-1">ยังไม่มีข้อมูลสรุป</p>
-                  <p className="text-xs text-slate-500 max-w-sm">
+                <div className="flex min-h-37.5 flex-col items-center justify-center text-center p-4 text-slate-600">
+                  <p className="font-semibold text-slate-800 mb-1">ยังไม่มีข้อมูลสรุป</p>
+                  <p className="text-xs text-slate-600 max-w-sm">
                     ข้อความอาจสั้นเกินไปหรือไม่พบเนื้อหาสำคัญสำหรับการสรุปผล กรุณาลองกดปุ่ม "สร้างใหม่" หรือพิมพ์ข้อความเพิ่มเติม
                   </p>
                 </div>
@@ -393,7 +414,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
               title="สร้างสรุปใหม่"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-600' : ''}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-700' : ''}`} />
               <span>สร้างใหม่</span>
             </button>
             <button
@@ -405,8 +426,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
             >
               {copied ? (
                 <>
-                  <Check className="h-3.5 w-3.5 text-emerald-600" />
-                  <span className="text-emerald-600">คัดลอกแล้ว</span>
+                  <Check className="h-3.5 w-3.5 text-emerald-700" />
+                  <span className="text-emerald-700">คัดลอกแล้ว</span>
                 </>
               ) : (
                 <>
@@ -439,7 +460,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
                 className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 active:scale-95 transition cursor-pointer"
                 title="เริ่มการสนทนาในห้องแชทใหม่ (ประวัติเดิมจะถูกบันทึกไว้ในแถบประวัติ)"
               >
-                <Plus className="h-3.5 w-3.5 text-emerald-600" />
+                <Plus className="h-3.5 w-3.5 text-emerald-700" />
                 <span>แชทใหม่</span>
               </button>
             )}

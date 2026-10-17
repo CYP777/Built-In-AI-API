@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -74,7 +74,8 @@ const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = 
         <button
           type="button"
           onClick={handleCopyCode}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 cursor-pointer"
+          aria-label="คัดลอกโค้ดนี้"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           title="คัดลอกโค้ดนี้"
         >
           {copied ? (
@@ -105,6 +106,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [activeLightboxImage, setActiveLightboxImage] = useState<ImageAttachment | null>(null);
   const isUser = message.sender === 'user';
+
+  const allImages = useMemo(() => {
+    if (message.imageAttachments && message.imageAttachments.length > 0) {
+      return message.imageAttachments;
+    }
+    return message.imageAttachment ? [message.imageAttachment] : [];
+  }, [message.imageAttachments, message.imageAttachment]);
 
   // Handle Escape key to close image lightbox and prevent background scroll
   useEffect(() => {
@@ -141,16 +149,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           <button
             type="button"
             onClick={() => setIsExpanded((prev) => !prev)}
-            className="flex items-center gap-2 bg-white/95 px-3.5 sm:px-4 py-1 text-slate-700 rounded-full border border-slate-300/90 shadow-2xs shrink-0 hover:bg-slate-50 hover:border-slate-400/80 transition cursor-pointer select-none"
+            aria-expanded={isExpanded}
+            className="flex items-center gap-2 bg-white/95 px-3.5 sm:px-4 py-1 text-slate-700 rounded-full border border-slate-300/90 shadow-2xs shrink-0 hover:bg-slate-50 hover:border-slate-400/80 transition cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
             title={isExpanded ? 'คลิกเพื่อพับเก็บสรุป' : 'คลิกเพื่อแสดงสรุป'}
           >
-            <Layers className="h-3.5 w-3.5 text-emerald-600" />
+            <Layers className="h-3.5 w-3.5 text-emerald-700" />
             <span className="text-xs font-semibold tracking-wider text-slate-800">
               Conversation compacted
             </span>
             <ChevronDown
-              className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
-                isExpanded ? 'rotate-180 text-emerald-600' : ''
+              className={`h-3.5 w-3.5 text-slate-600 transition-transform duration-200 ${
+                isExpanded ? 'rotate-180 text-emerald-700' : ''
               }`}
             />
           </button>
@@ -162,8 +171,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           const cleanedText = cleanCompressedSummary(message.text);
           return (
             <div className="my-2.5 px-2 sm:px-4 py-1 text-xs text-slate-600 leading-relaxed min-w-0 max-w-full wrap-break-word">
-              <div className="flex items-center gap-2 text-[11px] font-medium text-slate-400 mb-2 min-w-0">
-                <span className="text-emerald-700/90 font-semibold min-w-0">
+              <div className="flex items-center gap-2 text-[11px] font-medium text-slate-600 mb-2 min-w-0">
+                <span className="text-emerald-800 font-semibold min-w-0">
                   สรุปบริบทเดิมที่บันทึกลงหน่วยความจำ:
                 </span>
               </div>
@@ -258,63 +267,52 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           )}
 
           {/* Attached Images Preview if available */}
-          {(() => {
-            const allImages =
-              message.imageAttachments && message.imageAttachments.length > 0
-                ? message.imageAttachments
-                : message.imageAttachment
-                ? [message.imageAttachment]
-                : [];
-
-            if (allImages.length === 0) return null;
-
-            return (
-              <div
-                className={`mb-2.5 grid gap-2 ${
-                  allImages.length === 1
-                    ? 'grid-cols-1 max-w-sm'
-                    : allImages.length === 2
-                    ? 'grid-cols-2 max-w-md'
-                    : 'grid-cols-2 sm:grid-cols-3 max-w-lg'
-                }`}
-              >
-                {allImages.map((img, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setActiveLightboxImage(img);
-                      setIsLightboxOpen(true);
-                    }}
-                    className={`group/img block relative overflow-hidden rounded-xl border border-white/20 bg-slate-900/30 hover:border-white/50 hover:shadow-md transition cursor-zoom-in text-left ${
-                      allImages.length === 1 ? 'aspect-video w-full max-h-64' : 'aspect-4/3 w-full'
-                    }`}
-                    title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
-                  >
-                    <img
-                      src={img.url}
-                      alt={img.name}
-                      loading="lazy"
-                      decoding="async"
-                      className="h-full w-full rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02]"
-                    />
-                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                      <span className="bg-black/70 text-white text-xs px-2 py-0.5 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-sm">
-                        <ZoomIn className="w-3.5 h-3.5" />
-                        ดูภาพเต็ม
-                      </span>
-                    </div>
-                    <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between gap-1 rounded-lg bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-xs">
-                      <span className="truncate">{img.name}</span>
-                      <span className="shrink-0 opacity-80">
-                        {(img.size / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            );
-          })()}
+          {allImages.length > 0 && (
+            <div
+              className={`mb-2.5 grid gap-2 ${
+                allImages.length === 1
+                  ? 'grid-cols-1 max-w-sm'
+                  : allImages.length === 2
+                  ? 'grid-cols-2 max-w-md'
+                  : 'grid-cols-2 sm:grid-cols-3 max-w-lg'
+              }`}
+            >
+              {allImages.map((img, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setActiveLightboxImage(img);
+                    setIsLightboxOpen(true);
+                  }}
+                  className={`group/img block relative overflow-hidden rounded-xl border border-white/20 bg-slate-900/30 hover:border-white/50 hover:shadow-md transition cursor-zoom-in text-left ${
+                    allImages.length === 1 ? 'aspect-video w-full max-h-64' : 'aspect-4/3 w-full'
+                  }`}
+                  title="คลิกเพื่อดูรูปภาพขนาดเต็ม"
+                >
+                  <img
+                    src={img.url}
+                    alt={img.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02]"
+                  />
+                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                    <span className="bg-black/70 text-white text-xs px-2 py-0.5 rounded-full backdrop-blur-xs flex items-center gap-1 shadow-sm">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                      ดูภาพเต็ม
+                    </span>
+                  </div>
+                  <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between gap-1 rounded-lg bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-xs">
+                    <span className="truncate">{img.name}</span>
+                    <span className="shrink-0 opacity-80">
+                      {(img.size / 1024).toFixed(1)} KB
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Message Text */}
           <div className="whitespace-pre-wrap leading-relaxed">
@@ -330,14 +328,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Lightbox Modal */}
         {isLightboxOpen &&
           typeof document !== 'undefined' &&
+          allImages.length > 0 &&
           createPortal(
             (() => {
-              const allImages =
-                message.imageAttachments && message.imageAttachments.length > 0
-                  ? message.imageAttachments
-                  : message.imageAttachment
-                  ? [message.imageAttachment]
-                  : [];
               const activeImg = activeLightboxImage || allImages[0];
               if (!activeImg) return null;
 
@@ -421,7 +414,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <span className="text-xs font-bold text-slate-900 tracking-tight">
               ผู้ช่วย AI
             </span>
-            <span className="text-[11px] text-slate-400 ml-1">
+            <span className="text-[11px] text-slate-600 ml-1">
               {message.timestamp}
             </span>
           </div>
@@ -429,14 +422,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {/* Copy Button (discreet, accessible) */}
           {message.text && (
             <button
+              type="button"
               onClick={handleCopy}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              aria-label="คัดลอกข้อความคำตอบ"
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
               title="คัดลอกข้อความคำตอบ"
             >
               {copied ? (
                 <>
-                  <Check className="h-3 w-3 text-emerald-600" />
-                  <span className="text-emerald-600 font-semibold">คัดลอกแล้ว</span>
+                  <Check className="h-3 w-3 text-emerald-700" />
+                  <span className="text-emerald-700 font-semibold">คัดลอกแล้ว</span>
                 </>
               ) : (
                 <>
@@ -451,15 +446,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {/* Safety Advisory Banner if triggered */}
         {message.isSafetyAdvisory && (
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 text-xs font-semibold border border-amber-200 shadow-2xs">
-            <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0" />
+            <ShieldCheck className="h-4 w-4 text-amber-700 shrink-0" />
             <span>คำแนะนำด้านความปลอดภัย (Content Safety Advisory)</span>
           </div>
         )}
 
         {/* Thinking / Typing state before first token arrives */}
         {!message.text && message.isStreaming && (
-          <div className="flex items-center gap-2.5 py-2 text-slate-500 select-none animate-in fade-in duration-200">
-            <span className="text-xs font-medium text-slate-600">กำลังประมวลผลคำตอบ...</span>
+          <div className="flex items-center gap-2.5 py-2 text-slate-600 select-none animate-in fade-in duration-200">
+            <span className="text-xs font-medium text-slate-700">กำลังประมวลผลคำตอบ...</span>
             <div className="flex items-center gap-1 ml-0.5">
               <span
                 className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce will-change-transform"
@@ -479,7 +474,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
 
         {/* Fallback when AI response is empty and finished */}
         {!message.text && !message.isStreaming && (
-          <div className="py-2 text-xs text-slate-400 italic">
+          <div className="py-2 text-xs text-slate-600 italic">
             (ไม่มีข้อความตอบกลับจากระบบ)
           </div>
         )}
@@ -567,7 +562,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                   <td className="px-3.5 py-2.5 text-slate-700 leading-relaxed">{children}</td>
                 ),
                 blockquote: ({ children }) => (
-                  <blockquote className="my-3 rounded-xl border-l-4 border-emerald-500 bg-slate-100/75 pl-4 pr-3.5 py-2.5 text-slate-800 text-[13.5px] leading-relaxed shadow-2xs font-normal">
+                  <blockquote className="my-3 rounded-xl border border-emerald-200/80 bg-emerald-50/40 px-4 py-2.5 text-slate-800 text-[13.5px] leading-relaxed shadow-2xs font-normal">
                     {children}
                   </blockquote>
                 ),
@@ -587,7 +582,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                       href={normalizedHref}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-baseline gap-1 text-emerald-600 hover:text-emerald-700 underline underline-offset-2 break-all font-medium transition"
+                      className="inline-flex items-baseline gap-1 text-emerald-700 hover:text-emerald-800 underline underline-offset-2 break-all font-medium transition"
                     >
                       <span>{children}</span>
                       <ExternalLink className="inline-block h-3 w-3 shrink-0 opacity-70 translate-y-0.5" />

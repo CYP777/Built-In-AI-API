@@ -65,6 +65,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const tabs: { id: SettingsTabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -74,8 +85,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="flex flex-col w-full max-w-2xl max-h-[88vh] rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="flex flex-col w-full max-w-2xl max-h-[88vh] rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800 animate-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4.5 bg-slate-50/80 shrink-0">
           <div className="flex items-center gap-3">
@@ -83,18 +102,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Sliders className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-900 text-base leading-tight">
+              <h3 id="settings-modal-title" className="font-bold text-slate-900 text-base leading-tight">
                 ตั้งค่าโมเดล AI (Model Settings)
               </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
+              <p className="text-[11px] text-slate-600 mt-0.5">
                 {activeModelName || 'Chrome Built-in AI (GPU)'} • กำหนดพารามิเตอร์และระบบความปลอดภัย
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer active:scale-95"
-            title="ปิด"
+            className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            aria-label="ปิดหน้าต่างตั้งค่าโมเดล"
+            title="ปิดหน้าต่างตั้งค่าโมเดล"
           >
             <X className="h-4.5 w-4.5" />
           </button>
@@ -125,7 +146,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/40'
                   }`}
                 >
-                  <Icon className={`h-3.5 w-3.5 ${isSelected ? 'text-emerald-600' : 'text-slate-500'}`} />
+                  <Icon className={`h-3.5 w-3.5 ${isSelected ? 'text-emerald-700' : 'text-slate-600'}`} />
                   <span className="truncate">{tab.label}</span>
                 </button>
               );
@@ -160,7 +181,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder="เช่น: คุณคือผู้ช่วย AI ที่ชาญฉลาดและเป็นมิตร ให้ตอบคำถามอย่างถูกต้อง สุภาพ และกระชับ..."
                   className="w-full min-h-36 rounded-xl border border-slate-200 p-3.5 text-sm leading-relaxed focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-100 transition resize-y text-slate-700"
                 />
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-600 font-medium">
                   กำหนดบทบาท คำสั่งเฉพาะ และขอบเขตการตอบของ AI (สามารถลากมุมขวาล่างเพื่อขยายช่องกรอกได้)
                 </p>
               </div>
@@ -222,7 +243,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         แนะนำ
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                       ตรวจจับคำหยาบ ถ้อยคำรุนแรง และปฏิเสธการประมวลผลอย่างสุภาพตามนโยบายความปลอดภัย AI (เสาหลักที่ 2)
                     </p>
                   </div>
@@ -247,7 +268,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-800">ฐานข้อมูลในเครื่อง (Local Storage)</h4>
-                      <p className="text-[11px] text-slate-500">IndexedDB • จัดเก็บบนเบราว์เซอร์ 100%</p>
+                      <p className="text-[11px] text-slate-600">IndexedDB • จัดเก็บบนเบราว์เซอร์ 100%</p>
                     </div>
                   </div>
                   <span className="text-[10px] font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
@@ -261,7 +282,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="space-y-1.5 pt-1 border-t border-slate-100">
                     <div className="flex items-center justify-between text-xs text-slate-600 font-medium">
                       <span>พื้นที่ที่ใช้งาน: <strong>{storageInfo.usageFormatted}</strong></span>
-                      <span className="text-slate-400">จากโควตาทั้งหมด {storageInfo.quotaFormatted}</span>
+                      <span className="text-slate-600 font-medium">จากโควตาทั้งหมด {storageInfo.quotaFormatted}</span>
                     </div>
                     <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
                       <div
@@ -282,7 +303,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-800">ข้อตกลงและนโยบายความปลอดภัย AI</h4>
-                      <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                      <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
                         อ่านข้อกำหนด 4 เสาหลักด้านความถูกต้อง ปลอดภัย ข้อมูลส่วนบุคคล และความโปร่งใส
                       </p>
                     </div>
@@ -313,7 +334,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* Built-in AI Guide Box */}
               <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-5 space-y-3.5 text-xs text-slate-700">
                 <div className="flex items-center gap-2 font-bold text-slate-800 text-sm">
-                  <HelpCircle className="h-4.5 w-4.5 text-emerald-600" />
+                  <HelpCircle className="h-4.5 w-4.5 text-emerald-700" />
                   <span>วิธีเปิดใช้งาน Chrome Built-in AI (Prompt API)</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-2 text-slate-600 pl-1 leading-relaxed">

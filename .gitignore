@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # AI Agent customizations and skills
 .agents/
 .agent/
+
+.claude
+AGENTS.md

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, ArrowDown, ArrowRight, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert, Music, Radio } from 'lucide-react';
+import { Send, Square, Sparkles, Lightbulb, Code2, Globe, FileText, Info, Gauge, ArrowDown, ArrowRight, Image as ImageIcon, X, Mic, MicOff, AlertTriangle, Layers, Plus, ShieldAlert, Music, Radio, SquarePen } from 'lucide-react';
 import { ChatMessage, type Message } from '../components/ChatMessage';
-import type { ImageAttachment, AudioAttachment } from '../types/ai';
 import { ChatHeader } from '../components/ChatHeader';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
+import { ToastContainer, type ToastItem, type ToastType } from '../components/Toast';
+import { useAudioRecorder, useSpeechRecognition, useMultimodalAttachments } from '../hooks';
 const SettingsModal = React.lazy(() =>
   import('../components/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 );
@@ -13,9 +14,8 @@ const PolicyModal = React.lazy(() =>
 const SummaryModal = React.lazy(() =>
   import('../components/SummaryModal').then((m) => ({ default: m.SummaryModal }))
 );
-import { aiService, estimateTokens, type AIServiceState } from '../services/ai-service';
+import { aiService, estimateTokens, getDefaultSystemPrompt, type AIServiceState } from '../services/ai-service';
 import { summarizerService } from '../services/summarizer-service';
-import { speechService } from '../services/speech-service';
 import { chatHistoryService } from '../services/chat-history-service';
 import type { ChatSession, CachedSessionSummary } from '../types/chat-history';
 import {
@@ -24,6 +24,7 @@ import {
   isProfanityFilterEnabled,
   setProfanityFilterEnabled,
 } from '../utils/profanity-filter';
+import { generateId } from '../utils/id';
 
 const QUICK_PROMPTS = [
   {
@@ -51,18 +52,17 @@ const QUICK_PROMPTS = [
 const POLICY_MARKER = '[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]';
 const POLICY_CLAUSE =
   '\n\n[ข้อกำหนดนโยบายความถูกต้องและจริยธรรม]: ต้องตอบโดยยึดหลักข้อเท็จจริงและความเป็นกลาง ตรวจสอบความถูกต้องอย่างรอบคอบ ปฏิเสธข้อมูลที่ผิดกฎหมายหรือสร้างความเกลียดชัง และไม่แต่งเติมข้อมูลเท็จอย่างเด็ดขาด';
-const getDefaultBasePrompt = (modelName?: string): string => {
-  const name = modelName || 'Chrome Built-in AI';
-  return `คุณคือผู้ช่วย AI อัจฉริยะที่ประมวลผลด้วยโมเดล ${name} ในคอมพิวเตอร์ของคุณอย่างปลอดภัยและเป็นส่วนตัว ตอบคำถามอย่างสุภาพ ถูกต้อง ชัดเจน และเป็นมิตร`;
-};
+const getDefaultBasePrompt = getDefaultSystemPrompt;
 const POLICY_ACCEPTED_KEY = 'ai_safety_policy_accepted';
 
-function generateId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).substring(2, 9);
-}
+// Token Calculation & Context Warning Constants
+const TOKENS_PER_IMAGE = 300;
+const TOKENS_PER_AUDIO = 300;
+const CHARS_PER_IMAGE_ESTIMATE = 1200; // ~300 tokens * 4
+const DEFAULT_MAX_TOKENS = 9216;
+const CRITICAL_TOKENS_THRESHOLD = 1200;
+const HIGH_CONTEXT_PERCENTAGE = 85;
+const CRITICAL_CONTEXT_PERCENTAGE = 95;
 
 function getCurrentTime(): string {
   return new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' }).format(new Date());
@@ -117,25 +117,86 @@ const AIPromptPage: React.FC = () => {
   });
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [selectedImages, setSelectedImages] = useState<ImageAttachment[]>([]);
-  const [selectedAudio, setSelectedAudio] = useState<AudioAttachment | null>(null);
-  const [isRecordingAudio, setIsRecordingAudio] = useState<boolean>(false);
-  const [recordingDuration, setRecordingDuration] = useState<number>(0);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioFileInputRef = useRef<HTMLInputElement | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const userScrolledUpRef = useRef<boolean>(false);
   const draftInputRef = useRef<string>('');
-  const speechBaseTextRef = useRef<string>('');
   const messagesRef = useRef<Message[]>(messages);
+
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const showToast = useCallback((message: string, type: ToastType = 'info') => {
+    const id = generateId();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // 1. Multimodal Attachments Hook
+  const {
+    selectedImages,
+    setSelectedImages,
+    selectedAudio,
+    setSelectedAudio,
+    processImageFile,
+    processAudioFile,
+    handleRemoveImage,
+    handleRemoveAudio,
+    handlePaste,
+    clearAttachments,
+  } = useMultimodalAttachments({
+    onNotice: (msg, type) => showToast(msg, type),
+  });
+
+  // 2. Audio Recorder Hook
+  const {
+    isRecordingAudio,
+    recordingDuration,
+    startAudioRecording,
+    stopAudioRecording,
+    cancelAudioRecording,
+  } = useAudioRecorder({
+    onAudioRecorded: (attachment) => setSelectedAudio(attachment),
+    onError: (errMsg) => showToast(errMsg, 'error'),
+  });
+
+  // 3. Speech Recognition (Voice Input) Hook
+  const {
+    isListening,
+    speechLang,
+    setSpeechLang,
+    interimTranscript,
+    isSpeechSupported,
+    isLocalSpeechSupported,
+    toggleListening,
+    stopListening: stopSpeechListening,
+  } = useSpeechRecognition({
+    onFinalTranscript: (fullText) => {
+      setInputMessage(fullText);
+      setTimeout(() => {
+        const el = textareaRef.current;
+        if (el) {
+          el.style.height = 'auto';
+          el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+          el.focus();
+        }
+      }, 50);
+    },
+    onError: (errMsg) => showToast(errMsg, 'error'),
+  });
+
+  const handleToggleListening = useCallback(() => {
+    toggleListening(inputMessage);
+  }, [toggleListening, inputMessage]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -164,9 +225,11 @@ const AIPromptPage: React.FC = () => {
       }
       const savedActiveId = chatHistoryService.getActiveSessionId();
       if (!currentSessionIdRef.current && savedActiveId && loadedSessions.some((s) => s.id === savedActiveId)) {
+        currentSessionIdRef.current = savedActiveId;
         setCurrentSessionId(savedActiveId);
         const active = loadedSessions.find((s) => s.id === savedActiveId);
         if (active) {
+          messagesRef.current = active.messages;
           setMessages(active.messages);
         }
       }
@@ -177,174 +240,7 @@ const AIPromptPage: React.FC = () => {
     };
   }, []);
 
-  // Helper to read File into persistent Data URL and add to selectedImages
-  const processImageFile = useCallback((file: File, fallbackName?: string) => {
-    if (!file.type.startsWith('image/')) {
-      alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น (เช่น PNG, JPG, WebP, GIF)');
-      return;
-    }
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert('ขนาดไฟล์รูปภาพเกินกำหนด (จำกัดไม่เกิน 10 MB ต่อภาพ)');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      setSelectedImages((prev) => {
-        if (prev.length >= 8) {
-          alert('จำกัดการแนบรูปภาพไม่เกิน 8 รูปต่อครั้ง');
-          return prev;
-        }
-        return [
-          ...prev,
-          {
-            url: dataUrl,
-            name: file.name || fallbackName || `image-${Date.now()}.png`,
-            size: file.size,
-            type: file.type || 'image/png',
-            file: file,
-          },
-        ];
-      });
-    };
-    reader.readAsDataURL(file);
-  }, []);
-
-  // Helper to process audio file into AudioAttachment
-  const processAudioFile = useCallback((file: File) => {
-    if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|m4a|webm|aac|flac)$/i.test(file.name)) {
-      alert('กรุณาเลือกไฟล์เสียง (เช่น MP3, WAV, OGG, M4A, WebM)');
-      return;
-    }
-
-    if (file.size > 25 * 1024 * 1024) {
-      alert('ขนาดไฟล์เสียงเกินกำหนด (จำกัดไม่เกิน 25 MB)');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const dataUrl = event.target?.result as string;
-      let audioBuffer: AudioBuffer | undefined;
-      let duration: number | undefined;
-      try {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-          const ctx = new AudioCtx();
-          const ab = await file.arrayBuffer();
-          audioBuffer = await ctx.decodeAudioData(ab.slice(0));
-          duration = audioBuffer.duration;
-          ctx.close();
-        }
-      } catch (err) {
-        console.warn('Audio decode error:', err);
-      }
-
-      setSelectedAudio({
-        url: dataUrl,
-        name: file.name,
-        size: file.size,
-        type: file.type || 'audio/webm',
-        duration,
-        blob: file,
-        audioBuffer,
-      });
-    };
-    reader.readAsDataURL(file);
-  }, []);
-
-  // Direct Audio Recording for Multimodal Prompt API
-  const startAudioRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const mimeType = mediaRecorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        const reader = new FileReader();
-        reader.onload = async (ev) => {
-          const dataUrl = ev.target?.result as string;
-          let audioBuffer: AudioBuffer | undefined;
-          let duration: number | undefined;
-          try {
-            const AudioCtx =
-              window.AudioContext ||
-              (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-            if (AudioCtx) {
-              const ctx = new AudioCtx();
-              const ab = await audioBlob.arrayBuffer();
-              audioBuffer = await ctx.decodeAudioData(ab.slice(0));
-              duration = audioBuffer.duration;
-              ctx.close();
-            }
-          } catch (err) {
-            console.warn('decodeAudioData on recording fallback:', err);
-          }
-
-          setSelectedAudio({
-            url: dataUrl,
-            name: `voice-recording-${Date.now()}.webm`,
-            size: audioBlob.size,
-            type: mimeType,
-            duration,
-            blob: audioBlob,
-            audioBuffer,
-          });
-        };
-        reader.readAsDataURL(audioBlob);
-
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      mediaRecorder.start(200);
-      setIsRecordingAudio(true);
-      setRecordingDuration(0);
-      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error('Audio recording failed:', err);
-      alert('ไม่สามารถเข้าถึงไมโครโฟนสำหรับการบันทึกเสียงได้ (กรุณาอนุญาตการเข้าถึงไมโครโฟน)');
-    }
-  }, []);
-
-  const stopAudioRecording = useCallback(() => {
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecordingAudio(false);
-  }, []);
-
-  const cancelAudioRecording = useCallback(() => {
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    audioChunksRef.current = [];
-    setIsRecordingAudio(false);
-    setRecordingDuration(0);
-  }, []);
 
   // Drag and drop state
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -405,104 +301,6 @@ const AIPromptPage: React.FC = () => {
     e.target.value = '';
   };
 
-  // Handle remove specific selected image
-  const handleRemoveImage = useCallback((index: number) => {
-    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  // Handle remove selected audio
-  const handleRemoveAudio = useCallback(() => {
-    setSelectedAudio(null);
-    if (audioFileInputRef.current) {
-      audioFileInputRef.current.value = '';
-    }
-  }, []);
-
-  // Handle clipboard image paste (Ctrl + V)
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) {
-            e.preventDefault();
-            processImageFile(file, `clipboard-image-${Date.now()}.png`);
-          }
-        }
-      }
-    },
-    [processImageFile]
-  );
-
-  // Speech Recognition (Voice Input) State with On-Device Small Expert Model support
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [speechLang, setSpeechLang] = useState<'th-TH' | 'en-US'>('th-TH');
-  const [interimTranscript, setInterimTranscript] = useState<string>('');
-  const [isSpeechSupported] = useState<boolean>(() => speechService.isSupported());
-  const [isLocalSpeechSupported] = useState<boolean>(() => speechService.isProcessLocallySupported());
-
-  // Toggle voice listening
-  const handleToggleListening = () => {
-    if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
-      return;
-    }
-
-    speechBaseTextRef.current = inputMessage.trim();
-
-    const started = speechService.startListening(
-      {
-        onStart: () => {
-          setIsListening(true);
-        },
-        onInterim: (text) => {
-          setInterimTranscript(text);
-        },
-        onFinal: (text) => {
-          const base = speechBaseTextRef.current;
-          setInputMessage(base ? `${base} ${text}` : text);
-          setInterimTranscript('');
-          if (textareaRef.current) {
-            setTimeout(() => {
-              if (textareaRef.current) {
-                textareaRef.current.style.height = 'auto';
-                textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
-                textareaRef.current.focus();
-              }
-            }, 50);
-          }
-        },
-        onError: (err) => {
-          alert(err);
-          setIsListening(false);
-          setInterimTranscript('');
-        },
-        onEnd: () => {
-          setIsListening(false);
-          setInterimTranscript('');
-        },
-      },
-      { lang: speechLang, preferLocal: true }
-    );
-
-    if (!started) {
-      setIsListening(false);
-    }
-  };
-
-  // Clean up speech recognition on unmount
-  useEffect(() => {
-    return () => {
-      speechService.stopListening();
-    };
-  }, []);
-
   // Prompt History state สำหรับปุ่มลูกศรขึ้น/ลง (Arrow Up / Down)
   const [promptHistory, setPromptHistory] = useState<string[]>(() => {
     const savedActiveId = chatHistoryService.getActiveSessionId();
@@ -527,6 +325,19 @@ const AIPromptPage: React.FC = () => {
   // Summarizer & Context Compression state
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState<boolean>(false);
   const [isCompressingContext, setIsCompressingContext] = useState<boolean>(false);
+  const [pendingContextLimitPrompt, setPendingContextLimitPrompt] = useState<string | null>(null);
+
+  // Close context limit dialog on Escape key
+  useEffect(() => {
+    if (!pendingContextLimitPrompt) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPendingContextLimitPrompt(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pendingContextLimitPrompt]);
 
   const currentChatKey = currentSessionId || '__active_draft__';
   const activeCachedSummary = summaryCache[currentChatKey] || null;
@@ -649,16 +460,17 @@ const AIPromptPage: React.FC = () => {
   }, [isGenerating]);
 
   // Check Built-in AI on load / refresh
-  const verifyAI = useCallback(async () => {
+  const verifyAI = useCallback(async (targetPromptOverride?: string) => {
     const state = await aiService.checkAvailability();
     const detected = aiService.detectModelType();
-    const isDefaultBase = systemPrompt.includes('คุณคือผู้ช่วย AI อัจฉริยะ');
-    const dynamicPrompt = isDefaultBase
-      ? getDefaultBasePrompt(detected.modelName) + (systemPrompt.includes(POLICY_MARKER) ? POLICY_CLAUSE : '')
-      : systemPrompt;
+    const activePrompt = targetPromptOverride ?? (
+      systemPrompt.includes('คุณคือผู้ช่วย AI อัจฉริยะ')
+        ? getDefaultBasePrompt(detected.modelName) + (systemPrompt.includes(POLICY_MARKER) ? POLICY_CLAUSE : '')
+        : systemPrompt
+    );
 
     await aiService.initSession({
-      systemPrompt: dynamicPrompt,
+      systemPrompt: activePrompt,
       temperature,
       topK,
     });
@@ -682,34 +494,8 @@ const AIPromptPage: React.FC = () => {
   useEffect(() => {
     let ignore = false;
     (async () => {
-      const state = await aiService.checkAvailability();
-      const detected = aiService.detectModelType();
-      const dynamicPrompt = getDefaultBasePrompt(detected.modelName) + POLICY_CLAUSE;
-
-      if (!ignore) {
-        setSystemPrompt(dynamicPrompt);
-        await aiService.initSession({
-          systemPrompt: dynamicPrompt,
-          temperature,
-          topK,
-        });
-
-        if (aiService.hasActiveSession()) {
-          setStatusState({
-            status: 'available',
-            statusMessage: `Chrome ${detected.modelName} พร้อมใช้งานบนอุปกรณ์ของคุณ`,
-            isMock: false,
-            ...detected,
-          });
-        } else {
-          setStatusState({
-            ...state,
-            status: 'unavailable',
-            isMock: true,
-            statusMessage: 'ไม่สามารถสร้างเซสชัน AI บนอุปกรณ์ได้ (เบราว์เซอร์อยู่ในโหมดจำลอง)',
-          });
-        }
-      }
+      await verifyAI();
+      if (ignore) return;
     })();
     return () => {
       ignore = true;
@@ -723,7 +509,7 @@ const AIPromptPage: React.FC = () => {
       .filter((m) => !m.isCompacted && !m.isCompressedContext)
       .reduce((acc, m) => {
         const textLen = m.text ? m.text.length : 0;
-        const imgEquivalentChars = m.imageAttachment ? 1200 : 0; // ~300 tokens per image
+        const imgEquivalentChars = m.imageAttachment ? CHARS_PER_IMAGE_ESTIMATE : 0;
         return acc + textLen + imgEquivalentChars;
       }, 0);
   }, [messages]);
@@ -733,23 +519,23 @@ const AIPromptPage: React.FC = () => {
       .filter((m) => !m.isCompacted && !m.isCompressedContext)
       .reduce((acc, m) => {
         const textTokens = m.text ? estimateTokens(m.text) : 0;
-        const imgTokens = (m.imageAttachments?.length || (m.imageAttachment ? 1 : 0)) * 300;
-        const audioTokens = m.audioAttachment ? 300 : 0;
+        const imgTokens = (m.imageAttachments?.length || (m.imageAttachment ? 1 : 0)) * TOKENS_PER_IMAGE;
+        const audioTokens = m.audioAttachment ? TOKENS_PER_AUDIO : 0;
         return acc + textTokens + imgTokens + audioTokens;
       }, 0);
   }, [messages]);
 
   const tokenUsage = useMemo(() => {
     const draftTokens = inputMessage.trim() ? estimateTokens(inputMessage.trim()) : 0;
-    const draftImgTokens = selectedImages.length * 300;
-    const draftAudioTokens = selectedAudio ? 300 : 0;
+    const draftImgTokens = selectedImages.length * TOKENS_PER_IMAGE;
+    const draftAudioTokens = selectedAudio ? TOKENS_PER_AUDIO : 0;
     const systemTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
     return aiService.getContextTokenUsage(
       conversationTokens + systemTokens + draftTokens + draftImgTokens + draftAudioTokens
     );
   }, [conversationTokens, systemPrompt, inputMessage, selectedImages, selectedAudio]);
 
-  const maxTokens = tokenUsage.maxTokens || 9216;
+  const maxTokens = tokenUsage.maxTokens || DEFAULT_MAX_TOKENS;
   const tokensSoFar = Math.min(tokenUsage.tokensSoFar, maxTokens);
   const tokensLeft = Math.max(0, maxTokens - tokensSoFar);
   const contextPercentage = Math.min(100, Math.round((tokensSoFar / maxTokens) * 1000) / 10);
@@ -806,16 +592,16 @@ const AIPromptPage: React.FC = () => {
       // If triggered manually by user without specific target messages
       if (!targetMessages) {
         if (allActive.length === 0) {
-          alert('ยังไม่มีประวัติการสนทนาในห้องนี้สำหรับการบีบอัด');
+          showToast('ยังไม่มีประวัติการสนทนาในห้องนี้สำหรับการบีบอัด', 'info');
           return null;
         }
         if (uncompacted.length === 0) {
-          alert('ประวัติการสนทนาทั้งหมดในห้องนี้ได้รับการบีบอัดลงในบริบทเรียบร้อยแล้ว');
+          showToast('ประวัติการสนทนาทั้งหมดในห้องนี้ได้รับการบีบอัดลงในบริบทเรียบร้อยแล้ว', 'info');
           setIsSummaryModalOpen(false);
           return null;
         }
         if (uncompacted.length < 2) {
-          alert('จำเป็นต้องมีบทสนทนาอย่างน้อย 2 ข้อความ (คำถามและคำตอบ) ขึ้นไปเพื่อทำการบีบอัดบริบท');
+          showToast('จำเป็นต้องมีบทสนทนาอย่างน้อย 2 ข้อความ (คำถามและคำตอบ) ขึ้นไปเพื่อทำการบีบอัดบริบท', 'warning');
           return null;
         }
       }
@@ -925,7 +711,7 @@ const AIPromptPage: React.FC = () => {
         setIsCompressingContext(false);
       }
     },
-    [messages, systemPrompt, temperature, topK, isCompressingContext, setSystemPrompt, setIsSummaryModalOpen]
+    [messages, systemPrompt, temperature, topK, isCompressingContext, setSystemPrompt, setIsSummaryModalOpen, showToast]
   );
 
   // Stop generation
@@ -944,17 +730,14 @@ const AIPromptPage: React.FC = () => {
   const handleNewChat = useCallback(async () => {
     handleStop();
     if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
+      stopSpeechListening();
     }
     userScrolledUpRef.current = false;
     setShowScrollBottomButton(false);
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
-    setSelectedImages([]);
-    setSelectedAudio(null);
+    clearAttachments();
     if (isRecordingAudio) {
       cancelAudioRecording();
     }
@@ -983,7 +766,7 @@ const AIPromptPage: React.FC = () => {
       temperature,
       topK,
     });
-  }, [handleStop, isListening, isRecordingAudio, cancelAudioRecording, isPolicyAppended, temperature, topK, setSummaryCache]);
+  }, [handleStop, isListening, isRecordingAudio, cancelAudioRecording, isPolicyAppended, temperature, topK, setSummaryCache, stopSpeechListening, clearAttachments]);
 
   // Handle Send
   const handleSend = async (textToSend?: string) => {
@@ -995,9 +778,7 @@ const AIPromptPage: React.FC = () => {
 
     // If voice listening is active, stop it gracefully
     if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
+      stopSpeechListening();
     }
     if (isRecordingAudio) {
       stopAudioRecording();
@@ -1034,18 +815,8 @@ const AIPromptPage: React.FC = () => {
     if (isTokensCritical) {
       // หากหน่วยความจำเต็มหรือเกือบเต็ม (9,216/9,216 หรือ tokensLeft <= 100) และไม่มีข้อความให้บีบอัดแล้ว
       if ((tokensLeft <= 100 || tokensSoFar >= maxTokens) && activeRawMessages.length < 2) {
-        const confirmNewChat = window.confirm(
-          `บริบทการสนทนาเต็มแล้ว (${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens)\n\nระบบไม่สามารถรับคำสั่งเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตาหน่วยความจำ\n\nต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้เลยหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)`
-        );
-        if (confirmNewChat) {
-          await handleNewChat();
-          setTimeout(() => {
-            handleSend(effectiveUserPrompt);
-          }, 80);
-          return;
-        } else {
-          return;
-        }
+        setPendingContextLimitPrompt(effectiveUserPrompt);
+        return;
       }
 
       if (activeRawMessages.length >= 2) {
@@ -1069,8 +840,7 @@ const AIPromptPage: React.FC = () => {
     }
 
     setInputMessage('');
-    setSelectedImages([]);
-    setSelectedAudio(null);
+    clearAttachments();
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -1158,6 +928,7 @@ const AIPromptPage: React.FC = () => {
     setMessages(nextMessages);
 
     const currentActiveId = currentSessionIdRef.current;
+    let targetSessionId = currentActiveId;
     if (!currentActiveId) {
       const sessionTitle =
         effectiveUserPrompt.length > 36
@@ -1170,6 +941,7 @@ const AIPromptPage: React.FC = () => {
       );
       currentSessionIdRef.current = newSession.id;
       setCurrentSessionId(newSession.id);
+      targetSessionId = newSession.id;
     } else {
       chatHistoryService.updateSessionMessages(currentActiveId, nextMessages, activeSystemPrompt);
     }
@@ -1184,6 +956,7 @@ const AIPromptPage: React.FC = () => {
       await aiService.promptStream(
         effectiveUserPrompt,
         (currentText) => {
+          if (currentSessionIdRef.current !== targetSessionId) return;
           setMessages((prev) => {
             const updated = prev.map((msg) =>
               msg.id === actualAiId
@@ -1200,15 +973,17 @@ const AIPromptPage: React.FC = () => {
       );
 
       // 1. ปลดสถานะ Streaming ออกจากข้อความ AI ทันที (หยุดเคอร์เซอร์กะพริบ)
-      setMessages((prev) => {
-        const updated = prev.map((msg) =>
-          msg.id === actualAiId
-            ? { ...msg, isStreaming: false }
-            : msg
-        );
-        messagesRef.current = updated;
-        return updated;
-      });
+      if (currentSessionIdRef.current === targetSessionId) {
+        setMessages((prev) => {
+          const updated = prev.map((msg) =>
+            msg.id === actualAiId
+              ? { ...msg, isStreaming: false }
+              : msg
+          );
+          messagesRef.current = updated;
+          return updated;
+        });
+      }
 
       // 2. ปลดสถานะ isGenerating เป็น false ทันที เพื่อไม่ให้ปุ่มหรือแถบสถานะด้านล่างค้าง "AI กำลังประมวลผล..."
       setIsGenerating(false);
@@ -1232,7 +1007,8 @@ const AIPromptPage: React.FC = () => {
       if (
         (postTokensUsage.tokensLeft <= 350 || postTokensUsage.tokensSoFar >= maxTokens * 0.96) &&
         priorToCompact.length >= 2 &&
-        !controller.signal.aborted
+        !controller.signal.aborted &&
+        currentSessionIdRef.current === targetSessionId
       ) {
         const postCompResult = await handleCompressChatContext(priorToCompact, activeSystemPrompt);
         if (postCompResult) {
@@ -1272,7 +1048,7 @@ const AIPromptPage: React.FC = () => {
       );
 
       // หากหยุดเพราะ Token เต็ม: บีบอัดประวัติเดิม และตอบให้ใหม่ทันที!
-      if (isTokenExhausted && priorToCompact.length >= 2) {
+      if (isTokenExhausted && priorToCompact.length >= 2 && currentSessionIdRef.current === targetSessionId) {
         try {
           // 1. บีบอัดประวัติเดิม และแทรกเส้นแบ่ง ──────────────── Conversation compacted ────────────────
           const errCompResult = await handleCompressChatContext(priorToCompact, activeSystemPrompt);
@@ -1294,6 +1070,7 @@ const AIPromptPage: React.FC = () => {
           await aiService.promptStream(
             effectiveUserPrompt,
             (retryText) => {
+              if (currentSessionIdRef.current !== targetSessionId) return;
               setMessages((prev) => {
                 const retried = prev.map((msg) =>
                   msg.id === actualAiId
@@ -1309,13 +1086,15 @@ const AIPromptPage: React.FC = () => {
             currentAudio
           );
 
-          setMessages((prev) => {
-            const finished = prev.map((msg) =>
-              msg.id === actualAiId ? { ...msg, isStreaming: false } : msg
-            );
-            messagesRef.current = finished;
-            return finished;
-          });
+          if (currentSessionIdRef.current === targetSessionId) {
+            setMessages((prev) => {
+              const finished = prev.map((msg) =>
+                msg.id === actualAiId ? { ...msg, isStreaming: false } : msg
+              );
+              messagesRef.current = finished;
+              return finished;
+            });
+          }
           setIsGenerating(false);
           return;
         } catch (retryErr) {
@@ -1325,14 +1104,36 @@ const AIPromptPage: React.FC = () => {
 
       if (isTokenExhausted) {
         console.warn('Prompting stopped due to token limit exhaustion');
+        if (currentSessionIdRef.current === targetSessionId) {
+          setMessages((prev) => {
+            const updated = prev.map((msg) =>
+              msg.id === actualAiId
+                ? {
+                    ...msg,
+                    text:
+                      '**[แจ้งเตือน] หน่วยความจำบริบทเต็มแล้ว (9,216 / 9,216 Tokens)**\n\n' +
+                      'ระบบไม่สามารถประมวลผลคำตอบเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตาหน่วยความจำ แนะนำให้คลิก **"ขึ้นแชทใหม่"** ที่แถบด้านล่าง เพื่อเริ่มต้นการสนทนาใหม่ได้อย่างราบรื่น (ประวัติแชทนี้จะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)',
+                    isStreaming: false,
+                  }
+                : msg
+            );
+            messagesRef.current = updated;
+            return updated;
+          });
+        }
+        return;
+      }
+
+      console.error('Prompting failed:', err);
+      if (currentSessionIdRef.current === targetSessionId) {
         setMessages((prev) => {
           const updated = prev.map((msg) =>
             msg.id === actualAiId
               ? {
                   ...msg,
                   text:
-                    '**[แจ้งเตือน] หน่วยความจำบริบทเต็มแล้ว (9,216 / 9,216 Tokens)**\n\n' +
-                    'ระบบไม่สามารถประมวลผลคำตอบเพิ่มเติมในห้องแชทเดิมได้เนื่องจากเต็มโควตาหน่วยความจำ แนะนำให้คลิก **"ขึ้นแชทใหม่"** ที่แถบด้านล่าง เพื่อเริ่มต้นการสนทนาใหม่ได้อย่างราบรื่น (ประวัติแชทนี้จะถูกบันทึกเก็บไว้ในแถบประวัติด้านข้าง)',
+                    msg.text ||
+                    'ขออภัย เกิดข้อผิดพลาดในการประมวลผลคำตอบ กรุณาลองใหม่อีกครั้ง',
                   isStreaming: false,
                 }
               : msg
@@ -1340,45 +1141,47 @@ const AIPromptPage: React.FC = () => {
           messagesRef.current = updated;
           return updated;
         });
-        return;
+      }
+    } finally {
+      setIsGenerating(false);
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
       }
 
-      console.error('Prompting failed:', err);
-      setMessages((prev) => {
-        const updated = prev.map((msg) =>
+      if (currentSessionIdRef.current === targetSessionId) {
+        const finalMessages = messagesRef.current.map((msg) =>
           msg.id === actualAiId
             ? {
                 ...msg,
-                text:
-                  msg.text ||
-                  'ขออภัย เกิดข้อผิดพลาดในการประมวลผลคำตอบ กรุณาลองใหม่อีกครั้ง',
+                text: msg.text || (controller.signal.aborted ? 'หยุดการสร้างข้อความแล้ว' : msg.text),
                 isStreaming: false,
               }
             : msg
         );
-        messagesRef.current = updated;
-        return updated;
-      });
-    } finally {
-      setIsGenerating(false);
-      abortControllerRef.current = null;
+        messagesRef.current = finalMessages;
+        setMessages(finalMessages);
 
-      const finalMessages = messagesRef.current.map((msg) =>
-        msg.id === actualAiId
-          ? {
-              ...msg,
-              text: msg.text || (controller.signal.aborted ? '⏹️ หยุดการสร้างข้อความแล้ว' : msg.text),
-              isStreaming: false,
-            }
-          : msg
-      );
-      messagesRef.current = finalMessages;
-      setMessages(finalMessages);
-
-      const activeId = currentSessionIdRef.current;
-      if (activeId) {
-        chatHistoryService.updateSessionMessages(activeId, finalMessages, activeSystemPrompt);
-        setSessions(chatHistoryService.getAllSessions());
+        if (targetSessionId) {
+          chatHistoryService.updateSessionMessages(targetSessionId, finalMessages, activeSystemPrompt);
+          setSessions(chatHistoryService.getAllSessions());
+        }
+      } else if (targetSessionId) {
+        // หากผู้ใช้สลับไป session อื่นระหว่างที่กำลังสตรีม
+        // บันทึกข้อความของ session เดิมที่ได้มาลงในประวัติ โดยไม่ไปรบกวน session ปัจจุบันที่กำลังแสดงอยู่
+        const targetSession = chatHistoryService.getSession(targetSessionId);
+        if (targetSession) {
+          const updatedTargetMessages = targetSession.messages.map((msg) =>
+            msg.id === actualAiId
+              ? {
+                  ...msg,
+                  text: msg.text || (controller.signal.aborted ? 'หยุดการสร้างข้อความแล้ว' : msg.text),
+                  isStreaming: false,
+                }
+              : msg
+          );
+          chatHistoryService.updateSessionMessages(targetSessionId, updatedTargetMessages, activeSystemPrompt);
+          setSessions(chatHistoryService.getAllSessions());
+        }
       }
     }
   };
@@ -1389,13 +1192,11 @@ const AIPromptPage: React.FC = () => {
       if (session.id === currentSessionIdRef.current) return;
       handleStop();
       if (isListening) {
-        speechService.stopListening();
-        setIsListening(false);
-        setInterimTranscript('');
+        stopSpeechListening();
       }
-      setSelectedImages([]);
-      setSelectedAudio(null);
+      clearAttachments();
       setCurrentSessionId(session.id);
+      currentSessionIdRef.current = session.id;
       chatHistoryService.setActiveSessionId(session.id);
       messagesRef.current = session.messages;
       setMessages(session.messages);
@@ -1434,7 +1235,7 @@ const AIPromptPage: React.FC = () => {
         topK: session.topK ?? topK,
       });
     },
-    [handleStop, isListening, isPolicyAppended, scrollToBottom, temperature, topK, setSummaryCache]
+    [handleStop, isListening, isPolicyAppended, scrollToBottom, temperature, topK, setSummaryCache, stopSpeechListening, clearAttachments]
   );
 
   // Delete a session from history
@@ -1617,21 +1418,24 @@ const AIPromptPage: React.FC = () => {
       {statusState.isMock && !bannerDismissed && (
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-xs text-amber-800">
           <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 shrink-0 text-amber-600" />
+            <Info className="h-4 w-4 shrink-0 text-amber-700" />
             <span>
               ขณะนี้ระบบทำงานใน<strong>โหมดจำลอง</strong> เนื่องจาก Chrome Built-in AI ยังไม่ได้เปิดใช้งานในเบราว์เซอร์นี้
             </span>
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setIsSettingsOpen(true)}
-              className="font-medium underline hover:text-amber-950"
+              className="font-medium underline hover:text-amber-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 rounded px-1 py-0.5"
             >
               ดูวิธีเปิดใช้งาน
             </button>
             <button
+              type="button"
               onClick={() => setBannerDismissed(true)}
-              className="ml-2 font-bold text-amber-600 hover:text-amber-900"
+              aria-label="ปิดแถบแจ้งเตือน"
+              className="ml-2 inline-flex items-center justify-center min-h-[24px] min-w-[24px] rounded font-bold text-amber-800 hover:text-amber-950 hover:bg-amber-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
             >
               ×
             </button>
@@ -1682,9 +1486,9 @@ const AIPromptPage: React.FC = () => {
                                 {item.title}
                               </span>
                             </div>
-                            <ArrowRight className="h-4 w-4 text-emerald-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all shrink-0" />
+                            <ArrowRight className="h-4 w-4 text-emerald-700 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all shrink-0" />
                           </div>
-                          <p className="text-[12px] text-slate-500 leading-relaxed group-hover:text-slate-600">
+                          <p className="text-[12px] text-slate-600 leading-relaxed group-hover:text-slate-800">
                             {item.prompt}
                           </p>
                         </div>
@@ -1714,10 +1518,10 @@ const AIPromptPage: React.FC = () => {
             <button
               type="button"
               onClick={() => scrollToBottom(true)}
-              className="flex items-center gap-1.5 rounded-full bg-white/95 backdrop-blur-md px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-lg border border-slate-200/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 hover:shadow-xl transition-all active:scale-95 cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-150"
+              className="flex items-center gap-1.5 rounded-full bg-white/95 backdrop-blur-md px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-lg border border-slate-200/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 hover:shadow-xl transition-all active:scale-95 cursor-pointer animate-in fade-in slide-in-from-bottom-2 duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
               title="เลื่อนลงล่างสุด"
             >
-              <ArrowDown className="h-3.5 w-3.5 text-emerald-600" />
+              <ArrowDown className="h-3.5 w-3.5 text-emerald-700" />
               <span>เลื่อนลงล่างสุด</span>
             </button>
           </div>
@@ -1725,10 +1529,10 @@ const AIPromptPage: React.FC = () => {
 
         <div className="mx-auto max-w-3xl space-y-2">
           {/* Context Notice / Warning: แจ้งเตือนเมื่อแตะ >= 85% หรือเหลือ <= 1200T ให้ผู้ใช้ทราบและเลือกบีบอัดเองได้ตามต้องการ */}
-          {(contextPercentage >= 85 || tokensLeft <= 1200) && messages.length > 0 && (
+          {(contextPercentage >= HIGH_CONTEXT_PERCENTAGE || tokensLeft <= CRITICAL_TOKENS_THRESHOLD) && messages.length > 0 && (
             <div
               className={`flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-2xl border px-3.5 py-2 text-xs shadow-sm backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200 ${
-                contextPercentage >= 95
+                contextPercentage >= CRITICAL_CONTEXT_PERCENTAGE
                   ? 'bg-rose-50/95 border-rose-200/90 text-rose-900 shadow-rose-500/5'
                   : 'bg-amber-50/95 border-amber-200/90 text-amber-900 shadow-amber-500/5'
               }`}
@@ -1736,11 +1540,11 @@ const AIPromptPage: React.FC = () => {
               <div className="flex items-center gap-2 min-w-0">
                 <AlertTriangle
                   className={`h-4 w-4 shrink-0 ${
-                    contextPercentage >= 95 ? 'text-rose-600' : 'text-amber-600'
+                    contextPercentage >= CRITICAL_CONTEXT_PERCENTAGE ? 'text-rose-700' : 'text-amber-700'
                   }`}
                 />
                 <span className="font-semibold">
-                  {contextPercentage >= 95 ? 'บริบทความจำใกล้เต็มขั้นวิกฤต:' : 'บริบทความจำเริ่มสูง:'}
+                  {contextPercentage >= CRITICAL_CONTEXT_PERCENTAGE ? 'บริบทความจำใกล้เต็มขั้นวิกฤต:' : 'บริบทความจำเริ่มสูง:'}
                 </span>
                 <span className="font-medium opacity-90">
                   {tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T ({contextPercentage}%) • เหลือ {tokensLeft.toLocaleString()} Tokens
@@ -1751,7 +1555,7 @@ const AIPromptPage: React.FC = () => {
                   type="button"
                   onClick={() => handleCompressChatContext()}
                   disabled={isCompressingContext}
-                  className="flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 text-[11px] font-semibold shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                  className="flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 text-[11px] font-semibold shadow-2xs transition disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1"
                   title="บีบอัดประวัติเดิมลงในหน่วยความจำเพื่อลดการใช้ Tokens"
                 >
                   <Layers className="h-3 w-3" />
@@ -1760,10 +1564,10 @@ const AIPromptPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleNewChat}
-                  className="flex items-center gap-1 rounded-lg border border-slate-300 hover:bg-slate-100 active:scale-95 text-slate-700 bg-white px-2.5 py-1 text-[11px] font-medium shadow-2xs transition cursor-pointer"
+                  className="flex items-center gap-1 rounded-lg border border-slate-300 hover:bg-slate-100 active:scale-95 text-slate-700 bg-white px-2.5 py-1 text-[11px] font-medium shadow-2xs transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1"
                   title="เริ่มการสนทนาใหม่"
                 >
-                  <Plus className="h-3 w-3 text-slate-500" />
+                  <Plus className="h-3 w-3 text-slate-600" />
                   <span>เริ่มแชทใหม่</span>
                 </button>
               </div>
@@ -1773,7 +1577,7 @@ const AIPromptPage: React.FC = () => {
           {/* Real-time Profanity Detection Warning */}
           {currentInputProfanity && (
             <div className="flex items-center gap-2 rounded-2xl border border-amber-300 bg-amber-50/95 px-3.5 py-2 text-xs text-amber-900 shadow-2xs animate-in fade-in duration-150">
-              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-700" />
               <div className="flex-1 min-w-0">
                 <span className="font-semibold">ตรวจพบคำไม่สุภาพ:</span>
                 {' '}มีถ้อยคำที่ไม่เหมาะสม (<code>{currentInputProfanity.matches.slice(0, 3).join(', ')}</code>) ระบบจะปฏิเสธการประมวลผลหากกดส่ง
@@ -1785,7 +1589,7 @@ const AIPromptPage: React.FC = () => {
           {!isPolicyAccepted && (
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-300/80 bg-amber-50/95 px-3.5 py-2.5 text-xs text-amber-900 shadow-2xs animate-in fade-in duration-150">
               <div className="flex items-center gap-2.5 min-w-0">
-                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-700" />
                 <span className="font-medium">
                   คุณจำเป็นต้องยอมรับข้อตกลงความปลอดภัย AI ก่อนเริ่มสนทนา เพื่อให้สอดคล้องตามมาตรฐานความปลอดภัย
                 </span>
@@ -1793,7 +1597,7 @@ const AIPromptPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsPolicyModalOpen(true)}
-                className="shrink-0 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-amber-700 active:scale-95 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                className="shrink-0 rounded-xl bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-amber-800 active:scale-95 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               >
                 อ่านและยอมรับข้อตกลง
               </button>
@@ -1826,17 +1630,18 @@ const AIPromptPage: React.FC = () => {
                       <p className="truncate text-[11px] font-semibold text-slate-800" title={img.name}>
                         {img.name}
                       </p>
-                      <p className="text-[10px] text-slate-500 font-mono">
+                      <p className="text-[10px] text-slate-600 font-mono">
                         {(img.size / 1024).toFixed(0)} KB
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleRemoveImage(idx)}
+                      aria-label="ลบรูปภาพนี้"
                       title="ลบรูปภาพนี้"
-                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-emerald-200/60 hover:text-slate-700 transition cursor-pointer"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-600 hover:bg-emerald-200/60 hover:text-slate-900 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -1864,8 +1669,9 @@ const AIPromptPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleRemoveAudio}
+                  aria-label="ลบไฟล์เสียงนี้"
                   title="ลบไฟล์เสียงนี้"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-teal-100 hover:text-slate-700 transition cursor-pointer"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-teal-100 hover:text-slate-900 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1897,7 +1703,8 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={cancelAudioRecording}
-                    className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 transition cursor-pointer"
+                    aria-label="ยกเลิกการบันทึกเสียง"
+                    className="inline-flex items-center justify-center min-h-[24px] min-w-[24px] p-1 rounded-lg text-rose-700 hover:text-rose-900 hover:bg-rose-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                     title="ยกเลิกการบันทึกเสียง"
                   >
                     <X className="h-4 w-4" />
@@ -1924,10 +1731,10 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setSpeechLang((prev) => (prev === 'th-TH' ? 'en-US' : 'th-TH'));
-                      speechService.stopListening();
-                      setIsListening(false);
-                      setInterimTranscript('');
+                      if (isListening) {
+                        stopSpeechListening();
+                      }
+                      setSpeechLang(speechLang === 'th-TH' ? 'en-US' : 'th-TH');
                     }}
                     className="flex items-center gap-1 rounded-lg bg-white border border-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                     title="สลับภาษาพูดระหว่าง ภาษาไทย และ English"
@@ -1948,7 +1755,8 @@ const AIPromptPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleToggleListening}
-                    className="flex h-6 w-6 items-center justify-center rounded-lg text-rose-500 hover:bg-rose-200/60 transition cursor-pointer"
+                    aria-label="หยุดพิมพ์ด้วยเสียง"
+                    className="flex h-6 w-6 items-center justify-center rounded-lg text-rose-700 hover:text-rose-900 hover:bg-rose-200/60 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                     title="หยุดบันทึกเสียง"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -1983,6 +1791,7 @@ const AIPromptPage: React.FC = () => {
               value={inputMessage}
               autoFocus
               disabled={!isPolicyAccepted || isGenerating}
+              aria-label="ข้อความที่ต้องการส่งถึง AI"
               onChange={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
@@ -1991,7 +1800,7 @@ const AIPromptPage: React.FC = () => {
                   ? 'กรุณายอมรับข้อตกลงความปลอดภัย AI ก่อนเริ่มพิมพ์ข้อความ...'
                   : 'พิมพ์ข้อความสนทนา... (Shift+Enter ขึ้นบรรทัดใหม่ หรือวางไฟล์รูป/เสียง)'
               }
-              className="max-h-36 min-h-9.5 w-full resize-none border-0 bg-transparent px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-400/80 focus:outline-hidden leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
+              className="max-h-36 min-h-9.5 w-full resize-none border-0 bg-transparent px-2.5 py-1 text-sm text-slate-800 placeholder:text-slate-500 focus:outline-hidden leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
             />
 
             {/* Bottom Inner Toolbar */}
@@ -2024,7 +1833,7 @@ const AIPromptPage: React.FC = () => {
                   className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                     isListening
                       ? 'border border-rose-500 bg-rose-500 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
-                      : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
+                      : 'text-slate-600 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
@@ -2052,7 +1861,7 @@ const AIPromptPage: React.FC = () => {
                   className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 ${
                     isRecordingAudio
                       ? 'border border-rose-600 bg-rose-600 text-white shadow-xs ring-2 ring-rose-400/40 animate-pulse'
-                      : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                      : 'text-slate-600 hover:text-rose-700 hover:bg-rose-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <Radio className="h-3.5 w-3.5" />
@@ -2068,7 +1877,7 @@ const AIPromptPage: React.FC = () => {
                   className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
                     selectedAudio
                       ? 'border border-teal-500 bg-teal-50 text-teal-700 ring-2 ring-teal-400/20'
-                      : 'text-slate-400 hover:text-teal-700 hover:bg-teal-50'
+                      : 'text-slate-600 hover:text-teal-700 hover:bg-teal-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <Music className="h-3.5 w-3.5" />
@@ -2084,7 +1893,7 @@ const AIPromptPage: React.FC = () => {
                   className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                     selectedImages.length > 0
                       ? 'border border-emerald-500 bg-emerald-50 text-emerald-700 ring-2 ring-emerald-400/20'
-                      : 'text-slate-400 hover:text-emerald-700 hover:bg-emerald-50'
+                      : 'text-slate-600 hover:text-emerald-700 hover:bg-emerald-50'
                   } active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <div className="relative">
@@ -2101,16 +1910,16 @@ const AIPromptPage: React.FC = () => {
 
                 {/* Subtle Token Usage Badge */}
                 <div
-                  className="flex items-center gap-1.5 text-[10.5px] text-slate-500 font-medium px-2 py-0.5 rounded-full bg-slate-100/80 border border-slate-200/60 hover:bg-slate-200/60 transition cursor-default select-none shadow-2xs"
+                  className="flex items-center gap-1.5 text-[10.5px] text-slate-600 font-medium px-2 py-0.5 rounded-full bg-slate-100/80 border border-slate-200/60 hover:bg-slate-200/60 transition cursor-default select-none shadow-2xs"
                   title={`การใช้หน่วยความจำบริบท: ${tokensSoFar.toLocaleString()} / ${maxTokens.toLocaleString()} Tokens (${contextPercentage}%) • คงเหลือ ${tokensLeft.toLocaleString()} Tokens`}
                 >
-                  <Gauge className="h-3 w-3 text-emerald-600 shrink-0" />
+                  <Gauge className="h-3 w-3 text-emerald-700 shrink-0" />
                   <span className="hidden sm:inline font-mono">{tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} T</span>
                   <span
                     className={`rounded-full px-1.5 py-0.2 text-[9px] font-bold font-mono ${
-                      contextPercentage >= 95
+                      contextPercentage >= CRITICAL_CONTEXT_PERCENTAGE
                         ? 'bg-rose-100 text-rose-700'
-                        : contextPercentage >= 80
+                        : contextPercentage >= HIGH_CONTEXT_PERCENTAGE
                         ? 'bg-amber-100 text-amber-700'
                         : 'bg-emerald-100 text-emerald-700'
                     }`}
@@ -2149,7 +1958,7 @@ const AIPromptPage: React.FC = () => {
           </div>
 
           {/* Micro Footer Caption */}
-          <div className="text-center text-[11px] text-slate-400/80 px-2 select-none">
+          <div className="text-center text-[11px] text-slate-600 font-medium px-2 select-none">
             Google Chrome Built-in AI • ประมวลผลในเครื่องของคุณ ปลอดภัยและเป็นส่วนตัว 100%
           </div>
         </div>
@@ -2216,6 +2025,79 @@ const AIPromptPage: React.FC = () => {
           />
         </React.Suspense>
       )}
+
+      {/* Context Quota Exceeded Modal (Non-blocking WCAG-compliant alertdialog) */}
+      {pendingContextLimitPrompt !== null && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="token-limit-title"
+          aria-describedby="token-limit-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setPendingContextLimitPrompt(null)}
+        >
+          <div
+            className="relative w-full max-w-sm sm:max-w-md rounded-2xl bg-white p-5 sm:p-6 shadow-xl border border-slate-100 animate-in zoom-in-95 duration-150 text-slate-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPendingContextLimitPrompt(null)}
+              aria-label="ปิดหน้าต่างแจ้งเตือน"
+              className="absolute right-3.5 top-3.5 rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              title="ปิด"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-amber-50 border border-amber-200 text-amber-700 shadow-2xs mb-3">
+                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 stroke-[1.75]" />
+              </div>
+
+              <h3 id="token-limit-title" className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                บริบทการสนทนาเต็มโควตา
+              </h3>
+
+              <p id="token-limit-desc" className="mt-1.5 text-xs text-slate-600 max-w-xs leading-relaxed">
+                หน่วยความจำของห้องแชทนี้เต็มแล้ว ({tokensSoFar.toLocaleString()} / {maxTokens.toLocaleString()} Tokens) ระบบไม่สามารถรับข้อความเพิ่มเติมในห้องเดิมได้
+              </p>
+
+              <div className="mt-3 w-full rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-left text-xs text-slate-600 leading-relaxed">
+                ต้องการเริ่มห้องแชทใหม่และส่งข้อความนี้ทันทีหรือไม่? (ประวัติการสนทนาเดิมจะถูกบันทึกเก็บไว้ให้อัตโนมัติ)
+              </div>
+
+              <div className="mt-5 flex w-full gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setPendingContextLimitPrompt(null)}
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 sm:py-2.5 px-3 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:text-slate-900 active:scale-98 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const promptToSend = pendingContextLimitPrompt;
+                    setPendingContextLimitPrompt(null);
+                    if (promptToSend) {
+                      await handleNewChat();
+                      handleSend(promptToSend);
+                    }
+                  }}
+                  className="flex-1 rounded-xl bg-emerald-600 py-2 sm:py-2.5 px-3 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+                >
+                  <SquarePen className="h-3.5 w-3.5" />
+                  <span>เริ่มแชทใหม่และส่ง</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Accessible In-App Toast Notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 };

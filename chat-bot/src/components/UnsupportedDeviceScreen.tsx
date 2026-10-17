@@ -166,7 +166,7 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
           <button
             type="button"
             onClick={handleCopyLink}
-            className="w-full mt-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-medium text-xs sm:text-sm shadow-md transition cursor-pointer"
+            className="w-full mt-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-medium text-xs sm:text-sm shadow-md transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
           >
             {copied ? (
               <>
@@ -187,7 +187,9 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
           <button
             type="button"
             onClick={() => setShowDiagnostics((prev) => !prev)}
-            className="w-full flex items-center justify-between p-3.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition cursor-pointer"
+            aria-expanded={showDiagnostics}
+            aria-controls="device-diagnostics-panel"
+            className="w-full flex items-center justify-between p-3.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
             <span>ข้อมูลการตรวจจับอุปกรณ์ (Device Diagnostics)</span>
             {showDiagnostics ? (
@@ -198,38 +200,38 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
           </button>
 
           {showDiagnostics && (
-            <div className="border-t border-slate-800 p-4 bg-slate-950/60 text-[11px] text-slate-400 flex flex-col gap-2 font-mono">
+            <div id="device-diagnostics-panel" className="border-t border-slate-800 p-4 bg-slate-950/60 text-[11px] text-slate-400 flex flex-col gap-2 font-mono">
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">อุปกรณ์ที่ตรวจพบ:</span>
+                <span className="text-slate-400">อุปกรณ์ที่ตรวจพบ:</span>
                 <span className="text-rose-400 font-semibold">{deviceInfo.detectedName}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">ระบบปฏิบัติการ:</span>
+                <span className="text-slate-400">ระบบปฏิบัติการ:</span>
                 <span className="text-slate-200">{deviceInfo.osName}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">เบราว์เซอร์:</span>
+                <span className="text-slate-400">เบราว์เซอร์:</span>
                 <span className="text-slate-200">{deviceInfo.browserName}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">จุดสัมผัสหน้าจอ (Touch Points):</span>
+                <span className="text-slate-400">จุดสัมผัสหน้าจอ (Touch Points):</span>
                 <span className="text-slate-200">{deviceInfo.maxTouchPoints}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">รองรับ WebGPU บนเบราว์เซอร์:</span>
+                <span className="text-slate-400">รองรับ WebGPU บนเบราว์เซอร์:</span>
                 <span className={deviceInfo.hasGpu ? 'text-emerald-400' : 'text-amber-400'}>
                   {deviceInfo.hasGpu ? 'ตรวจพบ GPU API' : 'ไม่พบ WebGPU'}
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800/60">
-                <span className="text-slate-500">สถานะการอนุญาต:</span>
+                <span className="text-slate-400">สถานะการอนุญาต:</span>
                 <span className="text-rose-400 font-bold flex items-center gap-1">
                   <Ban className="h-3.5 w-3.5 text-rose-400" />
                   <span>ระงับการเข้าถึง (Blocked)</span>
                 </span>
               </div>
               <div className="pt-1">
-                <span className="text-slate-500 block mb-1">User Agent:</span>
+                <span className="text-slate-400 block mb-1">User Agent:</span>
                 <p className="text-[10px] text-slate-400 break-all bg-slate-900 p-2 rounded border border-slate-800">
                   {deviceInfo.userAgent || '(ไม่มี User Agent)'}
                 </p>
@@ -241,9 +243,9 @@ export const UnsupportedDeviceScreen: React.FC<UnsupportedDeviceScreenProps> = (
                   <button
                     type="button"
                     onClick={onBypassDev}
-                    className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-emerald-400 underline transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-emerald-400 underline transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-950 rounded px-1"
                   >
-                    <Wrench className="h-3 w-3 text-slate-500" />
+                    <Wrench className="h-3 w-3 text-slate-400" />
                     <span>[โหมดทดสอบสำหรับนักพัฒนา] ข้ามการตรวจจับชั่วคราว (Dev Bypass)</span>
                   </button>
                 </div>

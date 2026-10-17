@@ -35,6 +35,18 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
     }
   }, [isOpen]);
 
+  // Close on Escape when policy is already accepted
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isAlreadyAccepted) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isAlreadyAccepted, onClose]);
+
   if (!isOpen) return null;
 
   const handleToggleAppend = (checked: boolean) => {
@@ -52,17 +64,27 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="flex flex-col w-full max-w-2xl max-h-[90vh] rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="policy-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm p-3 sm:p-4 animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && isAlreadyAccepted) {
+          onClose();
+        }
+      }}
+    >
+      <div className="flex flex-col w-full max-w-2xl max-h-[90vh] rounded-3xl bg-white shadow-2xl border border-slate-200/80 overflow-hidden text-slate-800 animate-in zoom-in-95 duration-150">
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4.5 bg-slate-50/80">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-tr from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/20">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-900 text-base leading-tight">
+                <h3 id="policy-modal-title" className="font-bold text-slate-900 text-base leading-tight">
                   ข้อตกลงและนโยบายความปลอดภัย AI
                 </h3>
                 {isAlreadyAccepted && (
@@ -72,14 +94,16 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-600">
                 มาตรฐานความปลอดภัยและคุ้มครองข้อมูลส่วนบุคคล (PDPA)
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
+            className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            aria-label="ปิดหน้าต่างข้อตกลงและนโยบายความปลอดภัย AI"
             title="ปิดหน้าต่าง"
           >
             <X className="h-5 w-5" />
@@ -188,7 +212,7 @@ export const PolicyModal: React.FC<PolicyModalProps> = ({
                   onChange={(e) => handleToggleAppend(e.target.checked)}
                   className="h-4 w-4 rounded accent-emerald-600 cursor-pointer"
                 />
-                <span className={isAppended ? 'font-medium text-slate-800' : 'text-slate-500'}>
+                <span className={isAppended ? 'font-medium text-slate-800' : 'text-slate-600'}>
                   ใช้นโยบายนี้กำกับคำตอบของ AI เสมอ (System Prompt)
                 </span>
               </label>
